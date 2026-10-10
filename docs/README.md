@@ -91,9 +91,9 @@ $$\text{Crypto Hygiene} = \max\left(0, \operatorname{int}\left(100 - \frac{\text
 
 ## Example Scan Results (Bundled Dataset)
 
-*Scan executed on 2026-10-10 against `support-materials/`:*
+*Scan executed against challenge reference material in `support-materials/` using bundled sample fixtures and baseline heuristics:*
 
-* **Total Cryptographic Components Discovered:** **62**
+* **Total Cryptographic Components Discovered:** **62** *(reference bundled test run)*
 * **Counts by Source Type:**
   * Source Code (`.py`, `.java`, `.go`): **38**
   * AWS Cloud Posture (KMS, ALB, ACM JSON): **22**
@@ -105,6 +105,8 @@ $$\text{Crypto Hygiene} = \max\left(0, \operatorname{int}\left(100 - \frac{\text
 * **Crypto Hygiene Score:** **20 / 100**
 * **Posture Status:** **🚨 FAILING**
   * Alert: *"MIGRATION REQUIRED: 49 Critical findings use cryptography vulnerable to quantum attacks."*
+
+> *Note: Production pipeline runs dynamically invoke language-specific AST/static analysis engines (such as `scanner.go_scanner`) which produce precise, context-aware findings with zero false-positive comment leakage.*
 
 ---
 

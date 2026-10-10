@@ -337,3 +337,19 @@ def test_cbom_boolean_properties_stringified_strictly_lowercase():
     assert props["cryptotrace:quantumSafe"] == "true"
     assert props["cryptotrace:quantumVulnerable"] != "False"
     assert props["cryptotrace:quantumSafe"] != "True"
+
+
+def test_cbom_bom_ref_unique_across_different_lines_and_duplicates():
+    """Verify findings differing only by line number or identical duplicate occurrences get unique bom-ref IDs."""
+    s = CBOMSerializer()
+    f1 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 10}
+    f2 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 50}
+    f3 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 10}
+
+    s.add_finding(f1)
+    s.add_finding(f2)
+    s.add_finding(f3)
+
+    refs = [c["bom-ref"] for c in s.document["components"]]
+    assert len(refs) == 3
+    assert len(set(refs)) == 3, f"All bom-ref IDs in BOM document must be unique, got: {refs}"

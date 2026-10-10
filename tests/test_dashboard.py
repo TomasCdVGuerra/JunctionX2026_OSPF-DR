@@ -728,3 +728,53 @@ def test_extract_evidence_deep_fallback_hierarchy():
     assert ev2["NIST Standard"] == "FIPS 197"
 
 
+def test_pcap_fallback_empty_and_tls_detection(tmp_path):
+    """Regression: Empty/DNS-only PCAP yields 0 findings; TLS marker yields finding with valid evidence packet_number."""
+    empty_pcap = tmp_path / "empty.pcap"
+    empty_pcap.write_bytes(b"")
+    assert dashboard._scan_pcap_file_fallback(empty_pcap) == []
+
+    dns_pcap = tmp_path / "dns.pcap"
+    dns_pcap.write_bytes(b"\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00")
+    assert dashboard._scan_pcap_file_fallback(dns_pcap) == []
+
+    tls_pcap = tmp_path / "tls.pcap"
+    tls_pcap.write_bytes(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03")
+    tls_findings = dashboard._scan_pcap_file_fallback(tls_pcap)
+    assert len(tls_findings) == 1
+    assert tls_findings[0]["canonical_algorithm"] == "ECDHE-RSA-AES128-GCM-SHA256"
+    assert tls_findings[0]["line_number"] is None
+    assert tls_findings[0]["packet_number"] == 1
+
+
+def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
+    """Regression: Cloud fallback preserves RSA-3072, ECC-NIST-P384 without defaulting to RSA-2048."""
+    cloud_json = tmp_path / "kms.json"
+    cloud_json.write_text(json.dumps({
+        "Keys": [
+            {"KeySpec": "RSA_3072", "KeyArn": "arn:aws:kms:1:key/rsa3072"},
+            {"KeySpec": "ECC_NIST_P384", "KeyArn": "arn:aws:kms:1:key/ecc384"},
+            {"KeySpec": "SYMMETRIC_DEFAULT", "KeyArn": "arn:aws:kms:1:key/symm"},
+        ]
+    }))
+    findings = dashboard._scan_cloud_file_fallback(cloud_json)
+    algos = {f["canonical_algorithm"] for f in findings}
+    assert "RSA-3072" in algos
+    assert "ECC-NIST-P384" in algos
+    assert "AES-256-GCM" in algos
+    assert "RSA-2048" not in algos
+
+
+def test_source_fallback_ignores_comments(tmp_path):
+    """Regression: Source fallback ignores comments containing crypto names."""
+    py_file = tmp_path / "clean.py"
+    py_file.write_text("""
+# We decided that md5 and sha1 are completely forbidden here
+// Also do not use deriveKey for passwords
+def process(data):
+    return data
+""")
+    findings = dashboard._scan_source_file_fallback(py_file)
+    assert len(findings) == 0
+
+

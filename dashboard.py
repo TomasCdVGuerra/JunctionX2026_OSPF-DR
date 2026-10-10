@@ -692,7 +692,7 @@ def _render_risk_chart(dataframe) -> None:
         margin=dict(l=10, r=10, t=20, b=10),
     )
 
-    st.plotly_chart(figure, width="stretch")
+    st.plotly_chart(figure, use_container_width=True)
 
 
 def _render_download_button(cbom: dict[str, Any]) -> None:
@@ -708,7 +708,7 @@ def _render_download_button(cbom: dict[str, Any]) -> None:
         data=serialized_cbom.encode("utf-8"),
         file_name="cbom.json",
         mime="application/json",
-        width="stretch",
+        use_container_width=True,
     )
 
 
@@ -754,9 +754,14 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
 
     lines = content.splitlines()
 
-    for idx, line in enumerate(lines, start=1):
+    for idx, raw_line in enumerate(lines, start=1):
+        line = re.sub(r"#.*$", "", raw_line)
+        line = re.sub(r"//.*$", "", line).strip()
+        if not line:
+            continue
+
         # 1. RSA
-        if "rsa.generate_private_key" in line or "KeyPairGenerator.getInstance(\"RSA\")" in line or "rsa.GenerateKey(" in line:
+        if "rsa.generate_private_key" in line or 'KeyPairGenerator.getInstance("RSA")' in line or "rsa.GenerateKey(" in line:
             size_match = re.search(r"(\d{4})", line)
             key_size = size_match.group(1) if size_match else "2048"
             findings.append({
@@ -769,7 +774,7 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "source_path": display_name,
                 "operation": "KEYGEN",
                 "line_number": idx,
-                "matched_snippet": line.strip(),
+                "matched_snippet": raw_line.strip(),
                 "rule_id": "src-rsa-keygen",
                 "nist_standard": "FIPS 186-5",
             })
@@ -787,13 +792,13 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                     "source_path": display_name,
                     "operation": "SIGN",
                     "line_number": idx,
-                    "matched_snippet": line.strip(),
+                    "matched_snippet": raw_line.strip(),
                     "rule_id": "src-ed25519-sign",
                     "nist_standard": "FIPS 186-5",
                 })
 
-        # 3. Weak hashes: MD5, SHA-1
-        if "md5" in line.lower() or "md5.new" in line.lower() or "\"md5\"" in line.lower():
+        # 3. Weak hashes: MD5, SHA-1 (require API-level call patterns)
+        if re.search(r"\b(?:hashlib\.md5|md5\.New|md5\.Sum|MessageDigest\.getInstance\s*\(\s*\"MD5\"\)|crypto/md5)\b", line, re.IGNORECASE):
             findings.append({
                 "canonical_algorithm": "MD5",
                 "explanation": "MD5 is cryptographically broken by classical collision attacks.",
@@ -804,11 +809,11 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "source_path": display_name,
                 "operation": "DIGEST",
                 "line_number": idx,
-                "matched_snippet": line.strip(),
+                "matched_snippet": raw_line.strip(),
                 "rule_id": "src-md5-digest",
                 "nist_standard": "none",
             })
-        elif "sha1" in line.lower() or "sha-1" in line.lower() or "sha1withrsa" in line.lower():
+        elif re.search(r"\b(?:hashlib\.sha1|sha1\.New|sha1\.Sum|MessageDigest\.getInstance\s*\(\s*\"SHA-?1\"\)|crypto/sha1)\b", line, re.IGNORECASE) or "sha1withrsa" in line.lower():
             findings.append({
                 "canonical_algorithm": "SHA-1",
                 "explanation": "SHA-1 is deprecated and vulnerable to practical collision attacks.",
@@ -819,13 +824,13 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "source_path": display_name,
                 "operation": "DIGEST",
                 "line_number": idx,
-                "matched_snippet": line.strip(),
+                "matched_snippet": raw_line.strip(),
                 "rule_id": "src-sha1-digest",
                 "nist_standard": "FIPS 180-4",
             })
 
         # 4. AES
-        if "algorithms.AES(" in line or "Cipher.getInstance(\"AES" in line or "aes.NewCipher(" in line:
+        if "algorithms.AES(" in line or 'Cipher.getInstance("AES' in line or "aes.NewCipher(" in line:
             mode = "ECB" if "ECB" in line else "GCM"
             risk = "Critical" if mode == "ECB" else "Safe"
             findings.append({
@@ -838,13 +843,13 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "source_path": display_name,
                 "operation": "ENCRYPT",
                 "line_number": idx,
-                "matched_snippet": line.strip(),
+                "matched_snippet": raw_line.strip(),
                 "rule_id": "src-aes-cipher",
                 "nist_standard": "FIPS 197",
             })
 
         # 5. PBKDF2
-        if "PBKDF2" in line or "deriveKey" in line:
+        if re.search(r"\b(?:PBKDF2|pbkdf2_hmac|SecretKeyFactory\.getInstance\s*\(\s*\"PBKDF2|deriveKey)\b", line):
             findings.append({
                 "canonical_algorithm": "PBKDF2",
                 "explanation": "Key derivation function maintains symmetric quantum resistance.",
@@ -855,7 +860,7 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "source_path": display_name,
                 "operation": "KDF",
                 "line_number": idx,
-                "matched_snippet": line.strip(),
+                "matched_snippet": raw_line.strip(),
                 "rule_id": "src-pbkdf2-kdf",
                 "nist_standard": "none",
             })
@@ -887,23 +892,48 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
             continue
         spec = str(key.get("KeySpec", "unknown"))
         arn = key.get("KeyArn", key.get("KeyId", "unknown"))
-        is_rsa = "RSA" in spec
-        is_ecc = "ECC" in spec or "P256" in spec
-        algo = "RSA-2048" if is_rsa else ("ECC-NIST-P256" if is_ecc else "AES-256-GCM")
-        risk = "Critical" if (is_rsa or is_ecc) else "Safe"
+        spec_upper = spec.upper()
+        if "RSA_2048" in spec_upper:
+            algo = "RSA-2048"
+            risk = "Critical"
+        elif "RSA_3072" in spec_upper:
+            algo = "RSA-3072"
+            risk = "Critical"
+        elif "RSA_4096" in spec_upper:
+            algo = "RSA-4096"
+            risk = "Critical"
+        elif "RSA" in spec_upper:
+            algo = "RSA"
+            risk = "Critical"
+        elif "P384" in spec_upper:
+            algo = "ECC-NIST-P384"
+            risk = "Critical"
+        elif "P521" in spec_upper:
+            algo = "ECC-NIST-P521"
+            risk = "Critical"
+        elif "P256" in spec_upper or "ECC" in spec_upper:
+            algo = "ECC-NIST-P256"
+            risk = "Critical"
+        elif "SYMMETRIC" in spec_upper or "AES" in spec_upper:
+            algo = "AES-256-GCM"
+            risk = "Safe"
+        else:
+            algo = spec if spec != "unknown" else "unknown"
+            risk = "Unknown"
+
         findings.append({
             "canonical_algorithm": algo,
-            "explanation": f"KMS key {spec} is quantum vulnerable." if risk == "Critical" else "Symmetric key is quantum resistant.",
+            "explanation": f"KMS key {spec} is quantum vulnerable." if risk == "Critical" else (f"KMS key {spec} is quantum resistant." if risk == "Safe" else f"KMS key {spec} risk unverified."),
             "risk_rating": risk,
             "quantum_vulnerable": (risk == "Critical"),
             "quantum_safe": (risk == "Safe"),
             "source_type": "cloud-posture",
             "source_path": display_name,
-            "operation": "SIGN_VERIFY" if (is_rsa or is_ecc) else "ENCRYPT_DECRYPT",
+            "operation": "SIGN_VERIFY" if risk == "Critical" else "ENCRYPT_DECRYPT",
             "line_number": idx,
             "matched_snippet": f"{arn} (KeySpec: {spec})",
             "rule_id": "aws-kms-key-spec",
-            "nist_standard": "FIPS 186-5" if risk == "Critical" else "FIPS 197",
+            "nist_standard": "FIPS 186-5" if risk == "Critical" else ("FIPS 197" if risk == "Safe" else "none"),
         })
 
     # Load balancers
@@ -931,9 +961,10 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
                     "nist_standard": "none",
                 })
             elif listener.get("SslPolicy"):
+                policy = str(listener.get("SslPolicy"))
                 findings.append({
-                    "canonical_algorithm": "RSA-2048",
-                    "explanation": "ELB policy negotiates RSA and classical cipher suites.",
+                    "canonical_algorithm": "TLS-Classical-Cipher",
+                    "explanation": f"ELB policy {policy} negotiates classical cipher suites.",
                     "risk_rating": "Critical",
                     "quantum_vulnerable": True,
                     "quantum_safe": False,
@@ -941,9 +972,9 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
                     "source_path": display_name,
                     "operation": "KEY_EXCHANGE",
                     "line_number": idx,
-                    "matched_snippet": f"SslPolicy: {listener.get('SslPolicy')}",
+                    "matched_snippet": f"SslPolicy: {policy}",
                     "rule_id": "aws-alb-ssl-policy",
-                    "nist_standard": "FIPS 186-5",
+                    "nist_standard": "SP 800-52",
                 })
 
     # ACM certificates
@@ -952,9 +983,10 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
             continue
         key_algo = str(cert.get("KeyAlgorithm", "RSA_2048"))
         domain = cert.get("DomainName", "unknown")
+        algo_name = key_algo.replace("_", "-") if ("RSA" in key_algo or "ECC" in key_algo) else key_algo
         findings.append({
-            "canonical_algorithm": "RSA-2048" if "RSA" in key_algo else "ECC-NIST-P256",
-            "explanation": "Public key certificate is vulnerable to Shor's algorithm.",
+            "canonical_algorithm": algo_name,
+            "explanation": f"Public key certificate ({key_algo}) is vulnerable to Shor's algorithm.",
             "risk_rating": "Critical",
             "quantum_vulnerable": True,
             "quantum_safe": False,
@@ -984,7 +1016,11 @@ def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
     except Exception:
         return findings
 
-    if b"HTTP/" in raw_bytes or b"GET " in raw_bytes:
+    if not raw_bytes:
+        return findings
+
+    # 1. Cleartext HTTP
+    if b"HTTP/" in raw_bytes or b"GET " in raw_bytes or b"POST " in raw_bytes:
         findings.append({
             "canonical_algorithm": "Cleartext-HTTP",
             "explanation": "Unencrypted HTTP network traffic observed in capture.",
@@ -994,26 +1030,30 @@ def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
             "source_type": "network-capture",
             "source_path": display_name,
             "operation": "KEY_EXCHANGE",
-            "line_number": 0,
+            "line_number": None,
+            "packet_number": 1,
             "matched_snippet": "Unencrypted HTTP traffic on port 80",
             "rule_id": "pcap-cleartext-http",
             "nist_standard": "none",
         })
 
-    findings.append({
-        "canonical_algorithm": "ECDHE-RSA-AES128-GCM-SHA256",
-        "explanation": "Negotiated TLS cipher suite relies on classical key exchange.",
-        "risk_rating": "Critical",
-        "quantum_vulnerable": True,
-        "quantum_safe": False,
-        "source_type": "network-capture",
-        "source_path": display_name,
-        "operation": "KEY_EXCHANGE",
-        "line_number": 0,
-        "matched_snippet": "TLS 1.2 handshake negotiated classical cipher suite",
-        "rule_id": "pcap-tls-cipher",
-        "nist_standard": "FIPS 186-5",
-    })
+    # 2. Negotiated TLS handshake (heuristic check for TLS record markers 0x1603 or TLS keyword)
+    if b"\x16\x03" in raw_bytes or b"TLS" in raw_bytes:
+        findings.append({
+            "canonical_algorithm": "ECDHE-RSA-AES128-GCM-SHA256",
+            "explanation": "Negotiated TLS cipher suite relies on classical key exchange.",
+            "risk_rating": "Critical",
+            "quantum_vulnerable": True,
+            "quantum_safe": False,
+            "source_type": "network-capture",
+            "source_path": display_name,
+            "operation": "KEY_EXCHANGE",
+            "line_number": None,
+            "packet_number": 1,
+            "matched_snippet": "TLS 1.2 handshake negotiated classical cipher suite",
+            "rule_id": "pcap-tls-cipher",
+            "nist_standard": "FIPS 186-5",
+        })
 
     for f in findings:
         f["Scanner source"] = "FALLBACK heuristic"
@@ -1288,7 +1328,7 @@ def render_dashboard(
             placeholder="RSA, SHA-1, source path, rule ID...",
         )
 
-        if st.button("Clear active scan", width="stretch"):
+        if st.button("Clear active scan", use_container_width=True):
             st.session_state["cbom"] = None
             st.session_state["cbom_source"] = None
             st.session_state["scan_warnings"] = []
@@ -1406,7 +1446,7 @@ def render_dashboard(
 
     st.dataframe(
         _style_dataframe(display_dataframe),
-        width="stretch",
+        use_container_width=True,
         hide_index=True,
     )
 
@@ -1416,7 +1456,7 @@ def render_dashboard(
         data=display_dataframe.to_csv(index=False).encode("utf-8"),
         file_name="quantumtrace_findings.csv",
         mime="text/csv",
-        width="stretch",
+        use_container_width=True,
     )
 
 
@@ -1470,8 +1510,8 @@ def main() -> None:
             accept_multiple_files=True,
         )
 
-        scan_uploaded_button = st.button("Scan uploaded files", width="stretch")
-        scan_bundled_button = st.button("Scan bundled sample data", width="stretch")
+        scan_uploaded_button = st.button("Scan uploaded files", use_container_width=True)
+        scan_bundled_button = st.button("Scan bundled sample data", use_container_width=True)
 
         st.divider()
         uploaded_cbom = st.file_uploader(
@@ -1482,7 +1522,7 @@ def main() -> None:
 
         load_local_button = False
         if DEFAULT_CBOM_PATH.exists():
-            load_local_button = st.button("Load local cbom.json", width="stretch")
+            load_local_button = st.button("Load local cbom.json", use_container_width=True)
 
     # Handle scan actions
     if scan_uploaded_button:

@@ -37,6 +37,7 @@ class CBOMSerializer:
             },
             "components": [],
         }
+        self._used_bom_refs: set[str] = set()
 
     @staticmethod
     def _current_utc_timestamp():
@@ -187,17 +188,57 @@ class CBOMSerializer:
             self._finding_value(finding, "operation")
         )
 
+        # Extract location and identity markers for collision resistance
+        line_num = "0"
+        packet_num = "0"
+        rule_id = "unknown"
+        json_path = "none"
+
+        if hasattr(finding, "evidence") and finding.evidence:
+            ev0 = finding.evidence[0]
+            line_num = str(getattr(ev0, "line_number", None) or 0)
+            packet_num = str(getattr(ev0, "packet_number", None) or 0)
+            rule_id = str(getattr(ev0, "rule_id", None) or "unknown")
+            json_path = str(getattr(ev0, "json_path", None) or "none")
+        elif isinstance(finding, dict):
+            if finding.get("evidence"):
+                ev0 = finding["evidence"][0]
+                if isinstance(ev0, dict):
+                    line_num = str(ev0.get("line_number") or 0)
+                    packet_num = str(ev0.get("packet_number") or 0)
+                    rule_id = str(ev0.get("rule_id") or "unknown")
+                    json_path = str(ev0.get("json_path") or "none")
+                else:
+                    line_num = str(getattr(ev0, "line_number", None) or 0)
+                    packet_num = str(getattr(ev0, "packet_number", None) or 0)
+                    rule_id = str(getattr(ev0, "rule_id", None) or "unknown")
+                    json_path = str(getattr(ev0, "json_path", None) or "none")
+            else:
+                line_num = str(finding.get("line_number") or 0)
+                packet_num = str(finding.get("packet_number") or 0)
+                rule_id = str(finding.get("rule_id") or "unknown")
+                json_path = str(finding.get("json_path") or "none")
+
         ref_seed = (
-            f"{source_type}:{source_path}:"
-            f"{canonical_algorithm}:{operation}"
+            f"{source_type}:{source_path}:{canonical_algorithm}:{operation}:"
+            f"{rule_id}:{line_num}:{packet_num}:{json_path}"
         )
-        ref_hash = hashlib.sha256(
+        base_hash = hashlib.sha256(
             ref_seed.encode("utf-8")
         ).hexdigest()[:12]
+        bom_ref = f"crypto:{base_hash}"
+
+        # Guarantee unique bom-ref across all components in the document
+        counter = 1
+        unique_ref = bom_ref
+        while unique_ref in self._used_bom_refs:
+            unique_ref = f"{bom_ref}-{counter}"
+            counter += 1
+        self._used_bom_refs.add(unique_ref)
 
         component = {
             "type": "cryptographic-asset",
-            "bom-ref": f"crypto:{ref_hash}",
+            "bom-ref": unique_ref,
             "name": canonical_algorithm,
             "description": explanation,
             "properties": [
