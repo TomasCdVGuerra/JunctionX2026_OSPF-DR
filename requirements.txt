@@ -13,3 +13,6 @@ streamlit>=1.35,<2
 jsonschema>=4,<5
 
 # TShark is an external executable, installed separately for network scanning.
+
+# Cryptography library
+cryptography==46.0.5
