@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+
 
 from scanner.models import AssetType, QuantumRiskLevel
 
@@ -12,7 +12,7 @@ from scanner.models import AssetType, QuantumRiskLevel
 @dataclass
 class SourcePatternRule:
     rule_id: str
-    pattern: re.Pattern
+    pattern: re.Pattern[str] | str
     algorithm_name: str
     default_key_size: str | None
     risk_reasoning: str
@@ -25,8 +25,10 @@ class SourcePatternRule:
             self.pattern = re.compile(self.pattern)
 
 
-def _clean_constant_value(raw: str) -> str:
+def _clean_constant_value(raw: str | None) -> str:
     """Strip quotes, byte slice syntax, type casts, and trailing symbols."""
+    if not raw:
+        return "unknown"
     val = raw.strip()
     val = re.sub(r"//.*$", "", val).strip()
     val = re.sub(r"#.*$", "", val).strip()
@@ -107,7 +109,7 @@ def resolve_constant(file_content: str, variable_name: str) -> str:
     return "unknown"
 
 
-def infer_key_size_from_literal(literal_value: str) -> str:
+def infer_key_size_from_literal(literal_value: str | None) -> str:
     """Infer bit length from byte slice, hex string, numeric byte count, or string literal."""
     if not literal_value or literal_value == "unknown":
         return "unknown"
@@ -128,7 +130,8 @@ def infer_key_size_from_literal(literal_value: str) -> str:
         return str(byte_len * 8)
 
     # 3. Known key material string literal length: 16 chars -> 128 bits, 24 chars -> 192 bits, 32 chars -> 256 bits
-    if len(cleaned) in (16, 24, 32):
+    # Raw alphanumeric key material only (arbitrary strings with hyphens/spaces return unknown)
+    if len(cleaned) in (16, 24, 32) and cleaned.isalnum():
         return str(len(cleaned) * 8)
 
     return "unknown"
