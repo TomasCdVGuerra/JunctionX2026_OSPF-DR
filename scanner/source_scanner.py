@@ -1,27 +1,74 @@
-# Purpose:
-# Base multi-language static analysis engine coordinating pattern matching, same-file constant resolution, and evidence capture.
-#
-# Responsibilities:
-# - Orchestrate recursive source file discovery across repository paths for Python, Java, and Go files.
-# - Dispatch target files to language-specific scanners and collect cryptographic findings.
-# - Implement same-file constant resolution to infer key sizes, iterations, and modes when values are not inline literals.
-# - Resolve key lengths from hardcoded string or byte literals (e.g., a 16-byte key string implies AES-128, 32-byte implies AES-256).
-# - Fallback to "unknown" whenever a constant or property cannot be statically determined within the file.
-# - Ensure line numbers, matching code snippets, and specific rule IDs are attached to each finding's evidence trail.
-#
-# Planned interface:
-# - class SourcePatternRule: fields rule_id (str), pattern (regex), algorithm_name (str), default_key_size (str), risk_reasoning (str), nist_standard (str).
-# - resolve_constant(file_content: str, variable_name: str) -> str: returns resolved value or "unknown".
-# - infer_key_size_from_literal(literal_value: str) -> str: calculates key size from byte/string length (e.g., 16 bytes -> 128) or "unknown".
-# - scan_file(file_path: Path, rules: list[SourcePatternRule], base_dir: Path) -> list[CryptoFinding].
-# - scan_source_directory(directory_path: Path, base_dir: Path) -> list[CryptoFinding].
-#
-# Rules and edge cases:
-# - Constant resolution: When key size is not a literal at the call site, resolve simple same-file constants (e.g., Java static final int, Go const, Python module-level constants).
-# - Literal key inspection: If a raw key literal is defined (e.g. "0123456789ABCDEF"), determine key size from its byte length (16 bytes = 128 bits).
-# - Unknown fallback: If key size cannot be reliably resolved from same-file context, record "unknown"; never make speculative guesses.
-# - Custom implementations: Custom algorithms such as hand-written PBKDF2 built from HMAC (observed in Go) must not be missed and must not be misclassified as Critical.
-#
-# Scoring link:
-# - Accuracy (40%): Precise constant resolution prevents missing parameters or classifying valid keys as generic.
-# - Coverage (25%): Detects cryptographic operations across all supported programming languages and custom KDF constructs.
+"""Thin dispatcher and orchestrator for multi-language source code scanning."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from scanner.models import CryptoFinding
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "scan_file",
+    "scan_source_directory",
+]
+
+
+def scan_file(
+    file_path: Path,
+    rules: list[Any] | None = None,
+    base_dir: Path | None = None,
+) -> list[CryptoFinding]:
+    """Detect language by file extension and dispatch to the appropriate language scanner."""
+    file_path = Path(file_path)
+    if not file_path.is_file():
+        return []
+
+    suffix = file_path.suffix.lower()
+
+    if suffix == ".go":
+        from scanner.go_scanner import scan_go_file
+        return scan_go_file(file_path, base_dir=base_dir, rules=rules)
+
+    if suffix == ".py":
+        try:
+            import scanner.python_scanner as py_mod
+            if hasattr(py_mod, "scan_python_file"):
+                return py_mod.scan_python_file(file_path, base_dir=base_dir)
+            logger.warning("Python scanner unavailable; file was not analyzed: %s", file_path)
+        except Exception as exc:
+            logger.warning("Python scanner failed on %s: %s", file_path, exc)
+        return []
+
+    if suffix == ".java":
+        try:
+            import scanner.java_scanner as java_mod
+            if hasattr(java_mod, "scan_java_file"):
+                return java_mod.scan_java_file(file_path, base_dir=base_dir)
+            logger.warning("Java scanner unavailable; file was not analyzed: %s", file_path)
+        except Exception as exc:
+            logger.warning("Java scanner failed on %s: %s", file_path, exc)
+        return []
+
+    return []
+
+
+def scan_source_directory(
+    directory_path: Path,
+    base_dir: Path | None = None,
+) -> list[CryptoFinding]:
+    """Recursively discover and dispatch source code files to language-specific scanners."""
+    directory_path = Path(directory_path)
+    if not directory_path.is_dir():
+        return []
+
+    effective_base = base_dir if base_dir is not None else directory_path
+    findings: list[CryptoFinding] = []
+
+    for path in sorted(directory_path.rglob("*")):
+        if path.is_file() and path.suffix.lower() in {".go", ".py", ".java"}:
+            findings.extend(scan_file(path, base_dir=effective_base))
+
+    return findings
