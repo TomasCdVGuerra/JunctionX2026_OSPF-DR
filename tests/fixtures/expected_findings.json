@@ -1,0 +1,3 @@
+{
+  "_comment": "Holds the manually verified, hand-checked ground-truth list of expected cryptographic findings for every sample file in the challenge materials, including AWS cloud posture exports (KMS, ALB, ACM), Python scripts, Java classes, and Go microservices. Used by test_ground_truth.py to verify exact algorithm detection, evidence tracking, and risk classification while guarding against missing findings and false positives."
+}
