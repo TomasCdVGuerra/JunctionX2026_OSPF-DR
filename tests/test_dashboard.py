@@ -449,3 +449,30 @@ def test_search_with_regex_metacharacters():
         )
         filtered = df[mask]
         assert isinstance(filtered, object)
+
+
+def test_pydantic_crypto_finding_integration_with_cbom_and_dashboard():
+    """Verify that canonical Pydantic CryptoFinding objects integrate with CBOM and dashboard."""
+    from scanner.models import AssetType, CryptoFinding, Evidence, QuantumRiskLevel
+
+    finding = CryptoFinding(
+        algorithm_name="RSA-2048",
+        source_type="cloud-posture",
+        key_size=2048,
+        observation="configured",
+        asset_type=AssetType.KEY,
+        quantum_risk=QuantumRiskLevel.CRITICAL,
+        evidence=[
+            Evidence(file_path="kms_key_inventory.json", rule_id="AWS-KMS-RSA", line_number=12)
+        ],
+    )
+
+    cbom = _build_cbom_from_findings([finding])
+    assert cbom["bomFormat"] == "CycloneDX"
+    assert len(cbom["components"]) == 1
+
+    df = load_findings_dataframe(cbom)
+    assert len(df) == 1
+    assert df.iloc[0]["Algorithm"] == "RSA-2048"
+    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Source Type"] == "cloud-posture"
