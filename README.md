@@ -1,5 +1,5 @@
 ## Comandos para Python Environment (criar pela primeira vez):
-1. python -m venv .venv
+1. python -m venv .venv (ou py -3.13 -m venv .venv se tiverem versões diferentes desta)
 
 2. Ativar o ambiente (escolher o comando com base no OS/terminal):
     - Windows (PowerShell): .venv\Scripts\Activate.ps1Windows 
