@@ -1,0 +1,3 @@
+{
+  "_comment": "Maps each AWS ELB SslPolicy name (e.g. ELBSecurityPolicy-TLS-1-1-2017-01, ELBSecurityPolicy-2016-08) to its supported TLS protocol versions and cipher suites, taken from AWS's official security-policy reference table, because cloud configuration JSON dumps record only policy names rather than individual negotiated cryptographic primitives."
+}
