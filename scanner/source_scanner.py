@@ -39,7 +39,7 @@ def scan_file(
             if hasattr(py_mod, "scan_python_file"):
                 return py_mod.scan_python_file(file_path, base_dir=base_dir)
             logger.warning("Python scanner unavailable; file was not analyzed: %s", file_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Python scanner failed on %s: %s", file_path, exc)
         return []
 
@@ -49,7 +49,7 @@ def scan_file(
             if hasattr(java_mod, "scan_java_file"):
                 return java_mod.scan_java_file(file_path, base_dir=base_dir)
             logger.warning("Java scanner unavailable; file was not analyzed: %s", file_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Java scanner failed on %s: %s", file_path, exc)
         return []
 

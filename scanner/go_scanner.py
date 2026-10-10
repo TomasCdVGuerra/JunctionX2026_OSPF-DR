@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+from scanner.models import (
+    AssetType,
+    CryptoFinding,
+    CryptoFunction,
+    Evidence,
+    QuantumRiskLevel,
+)
 from scanner.utils import (
     SourcePatternRule,
     infer_key_size_from_literal,
@@ -334,7 +340,7 @@ def scan_go_file(
             if not code_line.strip():
                 continue
             for rule in rules:
-                if rule.pattern.search(code_line):
+                if rule.matches(code_line):
                     findings.append(CryptoFinding(
                         algorithm_name=rule.algorithm_name,
                         asset_type=rule.asset_type,
@@ -572,20 +578,21 @@ def scan_go_file(
 
         # F. AES
         if "aes.NewCipher(" in code_line:
-            key_size, mode = _resolve_aes_key_and_mode(source_text)
+            aes_key_size: int | None
+            aes_key_size, mode = _resolve_aes_key_and_mode(source_text)
             if mode == "ECB":
                 quantum_risk = QuantumRiskLevel.CRITICAL
                 risk_reasoning = "AES in ECB mode lacks semantic security and is classically broken; pattern leakage occurs."
-                algo_name = f"AES-{key_size}-ECB" if key_size else "AES-ECB"
-            elif key_size == 128:
+                algo_name = f"AES-{aes_key_size}-ECB" if aes_key_size else "AES-ECB"
+            elif aes_key_size == 128:
                 quantum_risk = QuantumRiskLevel.MEDIUM
                 risk_reasoning = "AES-128 is weakened by Grover's algorithm to 64-bit security."
                 algo_name = f"AES-128-{mode}"
-            elif key_size == 256 and mode == "GCM":
+            elif aes_key_size == 256 and mode == "GCM":
                 quantum_risk = QuantumRiskLevel.SAFE
                 risk_reasoning = "AES-256-GCM provides 128-bit quantum security against Grover's algorithm."
                 algo_name = "AES-256-GCM"
-            elif key_size == 256:
+            elif aes_key_size == 256:
                 quantum_risk = QuantumRiskLevel.SAFE
                 risk_reasoning = f"AES-256 in {mode} mode provides 128-bit quantum security against Grover's algorithm."
                 algo_name = f"AES-256-{mode}"
@@ -598,7 +605,7 @@ def scan_go_file(
                 algorithm_name=algo_name,
                 asset_type=AssetType.ALGORITHM,
                 source_type="source-code",
-                key_size=key_size,
+                key_size=aes_key_size,
                 mode=mode,
                 crypto_function=CryptoFunction.ENCRYPT,
                 quantum_risk=quantum_risk,

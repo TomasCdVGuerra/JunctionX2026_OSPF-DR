@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 from scanner.models import AssetType, QuantumRiskLevel
 from scanner.source_scanner import scan_file, scan_source_directory
@@ -23,7 +22,6 @@ from scanner.utils import (
     infer_key_size_from_literal,
     resolve_constant,
 )
-
 
 # --- Petty Dispatcher Tests ---
 

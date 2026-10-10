@@ -1,22 +1,23 @@
 """Unit and integration tests for scanner/go_scanner.py and scanner/source_scanner.py."""
 
 from pathlib import Path
+
 import pytest
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
-from scanner.utils import (
-    SourcePatternRule,
-    infer_key_size_from_literal,
-    resolve_constant,
-)
-from scanner.source_scanner import (
-    scan_file,
-    scan_source_directory,
-)
 from scanner.go_scanner import (
     GO_RULES,
     scan,
     scan_go_file,
+)
+from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
+from scanner.source_scanner import (
+    scan_file,
+    scan_source_directory,
+)
+from scanner.utils import (
+    SourcePatternRule,
+    infer_key_size_from_literal,
+    resolve_constant,
 )
 
 SAMPLE_GO_DIR = Path("support-materials/sample-repos/go")
@@ -508,6 +509,7 @@ func main() { md5.New() }
 def test_crypto_finding_extra_fields_forbidden():
     """Petty: Verify that extra fields are strictly forbidden by ConfigDict(extra='forbid')."""
     from pydantic import ValidationError
+
     from scanner.models import Evidence
 
     with pytest.raises(ValidationError):
@@ -523,6 +525,7 @@ def test_crypto_finding_extra_fields_forbidden():
 def test_crypto_finding_empty_algorithm_name_rejected():
     """Petty: Verify that blank or whitespace algorithm_name raises ValidationError."""
     from pydantic import ValidationError
+
     from scanner.models import Evidence
 
     ev = [Evidence(file_path="main.go", rule_id="test", line_number=1)]
