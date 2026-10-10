@@ -1,16 +1,6 @@
-# Planned dependencies for QuantumTrace (Python 3.12):
-#
-# rich:
-# Terminal formatting library used for colorized console output, progress indicators, and tabular summary reports.
-#
-# streamlit:
-# Lightweight web framework for rendering the interactive executive dashboard, finding explorer, and CBOM download UI.
-#
-# jsonschema:
-# JSON schema validator used to validate generated CBOM documents against the official CycloneDX 1.6 specification offline.
-#
-# scapy:
-# Packet manipulation and network analysis library used for advanced packet dissection and fallback PCAP parsing.
-#
-# pytest:
-# Test runner for executing unit tests, offline schema validation, and ground-truth regression tests.
+cryptography>=3.4
+rich>=12.0.0
+pytest>=6.0.0
+streamlit>=1.30.0
+pandas>=2.0.0
+plotly>=5.18.0
