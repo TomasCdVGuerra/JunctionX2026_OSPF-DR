@@ -476,3 +476,255 @@ def test_pydantic_crypto_finding_integration_with_cbom_and_dashboard():
     assert df.iloc[0]["Algorithm"] == "RSA-2048"
     assert df.iloc[0]["Risk Rating"] == "Critical"
     assert df.iloc[0]["Source Type"] == "cloud-posture"
+
+
+def test_real_scanner_used_when_scan_method_exists_bundled_data(monkeypatch):
+    """Test fails if a real scanner module exists with a scan method but the fallback was still used."""
+    mock_findings = [
+        {
+            "canonical_algorithm": "RSA-4096",
+            "risk_rating": "Critical",
+            "source_type": "source-code",
+            "source_path": "crypto_service.py",
+            "operation": "KEYGEN",
+        }
+    ]
+    mock_scan_dir = MagicMock(return_value=mock_findings)
+
+    # Provide real scanner module with scan method
+    monkeypatch.setattr(dashboard.source_scanner, "scan_source_directory", mock_scan_dir, raising=False)
+
+    # Spy on the fallback function to verify it is NOT used
+    mock_fallback = MagicMock(wraps=dashboard._scan_source_file_fallback)
+    monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
+
+    cbom, warnings = dashboard.scan_bundled_data()
+
+    # The real scanner method MUST be invoked
+    assert mock_scan_dir.called, "Real scanner module scan method was not invoked!"
+
+    # The fallback MUST NOT be used when real scanner exists with a scan method
+    assert not mock_fallback.called, "Fallback heuristic was used even though real scanner module had a scan method!"
+
+    # Every finding from that scanner must carry the real module tag, NOT fallback
+    df = dashboard.load_findings_dataframe(cbom)
+    src_rows = df[df["Source Type"] == "source-code"]
+    assert len(src_rows) > 0
+    assert (src_rows["Scanner source"] == f"real: {dashboard.source_scanner.__name__}").all()
+    assert not (src_rows["Scanner source"] == "FALLBACK heuristic").any()
+
+
+def test_real_scanner_used_when_scan_method_exists_uploaded_files(monkeypatch):
+    """Test fails if scan_uploaded_files uses fallback when a real file scanner exists."""
+    mock_findings = [
+        {
+            "canonical_algorithm": "Ed25519",
+            "risk_rating": "Critical",
+            "source_type": "source-code",
+            "source_path": "uploaded.py",
+            "operation": "SIGN",
+        }
+    ]
+    mock_scan_file = MagicMock(return_value=mock_findings)
+
+    monkeypatch.setattr(dashboard.source_scanner, "scan_file", mock_scan_file, raising=False)
+
+    mock_fallback = MagicMock(wraps=dashboard._scan_source_file_fallback)
+    monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
+
+    uploaded = MockUploadedFile("uploaded.py", "import ed25519")
+    cbom, warnings = dashboard.scan_uploaded_files([uploaded])
+
+    assert mock_scan_file.called, "Real scan_file method was not called!"
+    assert not mock_fallback.called, "Fallback heuristic was called despite real scanner existing!"
+
+    df = dashboard.load_findings_dataframe(cbom)
+    assert (df["Scanner source"] == f"real: {dashboard.source_scanner.__name__}").all()
+    assert not (df["Scanner source"] == "FALLBACK heuristic").any()
+
+
+def test_fallback_warning_banner_shown_when_fallback_used():
+    """Verify render_dashboard displays st.warning banner listing input types when fallback is used."""
+    cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:scannerSource", "value": "FALLBACK heuristic"},
+                ],
+            },
+            {
+                "name": "AES-128",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Medium"},
+                    {"name": "cryptotrace:sourceType", "value": "cloud-posture"},
+                    {"name": "cryptotrace:scannerSource", "value": "FALLBACK heuristic"},
+                ],
+            },
+        ]
+    }
+    with patch("dashboard.st") as mock_st:
+        mock_st.file_uploader.return_value = None
+        mock_st.multiselect.side_effect = lambda label, options, default: default
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False
+        mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
+
+        render_dashboard(cbom)
+
+        warning_calls = [str(call.args[0]) for call in mock_st.warning.call_args_list if call.args]
+        fallback_warnings = [msg for msg in warning_calls if "Fallback heuristic" in msg]
+        assert len(fallback_warnings) == 1
+        assert "cloud-posture" in fallback_warnings[0]
+        assert "source-code" in fallback_warnings[0]
+
+
+def test_fallback_warning_banner_not_shown_when_all_real_scanners():
+    """Verify render_dashboard does NOT display fallback banner when only real scanners were used."""
+    cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:scannerSource", "value": "real: scanner.source_scanner"},
+                ],
+            }
+        ]
+    }
+    with patch("dashboard.st") as mock_st:
+        mock_st.file_uploader.return_value = None
+        mock_st.multiselect.side_effect = lambda label, options, default: default
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False
+        mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
+
+        render_dashboard(cbom)
+
+        warning_calls = [str(call.args[0]) for call in mock_st.warning.call_args_list if call.args]
+        fallback_warnings = [msg for msg in warning_calls if "Fallback heuristic" in msg]
+        assert len(fallback_warnings) == 0
+
+
+def test_scanner_choice_logging(caplog):
+    """Verify scanner choice (real vs fallback) is logged via logger.info."""
+    import logging
+    with caplog.at_level(logging.INFO):
+        dashboard.scan_bundled_data()
+    assert any("FALLBACK heuristic" in record.message or "Using real scanner" in record.message for record in caplog.records)
+
+
+# --- Petty Dashboard Tests ---
+
+def test_load_findings_dataframe_malformed_components_resilience():
+    """Petty: Verify load_findings_dataframe never crashes on invalid CBOM structures and preserves schema."""
+    expected_cols = [
+        "Algorithm", "Risk Rating", "Scanner source", "Source Type", "Source Path",
+        "Operation", "Quantum Vulnerable", "Quantum Safe", "Line Number",
+        "Matched Snippet", "Rule ID", "NIST Standard", "BOM Reference", "Description",
+    ]
+
+    for bad_cbom in (
+        {},
+        {"components": None},
+        {"components": "string_not_list"},
+        {"components": 12345},
+        {"components": [{}]},
+        {"components": [{"invalid_key": "junk"}]},
+    ):
+        df = load_findings_dataframe(bad_cbom)
+        for col in expected_cols:
+            assert col in df.columns, f"Missing standard column {col} for malformed CBOM input {bad_cbom}!"
+
+
+def test_load_findings_dataframe_direct_crypto_finding_list():
+    """Petty: Verify load_findings_dataframe directly accepts a list of CryptoFinding models."""
+    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+
+    f = CryptoFinding(
+        algorithm_name="Ed25519",
+        asset_type=AssetType.ALGORITHM,
+        source_type="source-code",
+        crypto_function=CryptoFunction.SIGN,
+        quantum_risk=QuantumRiskLevel.CRITICAL,
+        observation="observed",
+        evidence=[Evidence(file_path="auth/token.go", rule_id="GO-ED25519", line_number=77)],
+    )
+
+    df = load_findings_dataframe([f])
+    assert len(df) == 1
+    assert df.iloc[0]["Algorithm"] == "Ed25519"
+    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Source Path"] == "auth/token.go"
+    assert df.iloc[0]["Line Number"] == "77"
+    assert df.iloc[0]["Rule ID"] == "GO-ED25519"
+
+
+def test_risk_css_exhaustive_tiers_and_fallbacks():
+    """Petty: Verify _risk_css produces valid CSS styling for all standard and non-standard risk labels."""
+    assert "dc2626" in _risk_css("Critical")
+    assert "f59e0b" in _risk_css("Medium")
+    assert "16a34a" in _risk_css("Safe")
+    assert "6b7280" in _risk_css("Unknown")
+    assert "6b7280" in _risk_css("completely_invented_risk_tier")
+    assert "6b7280" in _risk_css("")
+    assert "6b7280" in _risk_css(None)
+
+
+def test_safe_text_columns_mixed_types_and_nans():
+    """Petty: Verify _safe_text_columns normalizes NaNs, booleans, and numbers in text columns into safe strings."""
+    import pandas as pd
+    import numpy as np
+
+    raw_df = pd.DataFrame([
+        {"Algorithm": "AES", "Source Path": np.nan, "Matched Snippet": 42, "Rule ID": True},
+        {"Algorithm": None, "Source Path": "test.go", "Matched Snippet": None, "Rule ID": False},
+    ])
+
+    clean_df = _safe_text_columns(raw_df)
+    assert clean_df.iloc[0]["Algorithm"] == "AES"
+    assert clean_df.iloc[0]["Source Path"] == "unknown"
+    assert "42" in clean_df.iloc[0]["Matched Snippet"]
+    assert clean_df.iloc[0]["Rule ID"] == "True"
+    assert clean_df.iloc[1]["Algorithm"] == "unknown"
+    assert clean_df.iloc[1]["Source Path"] == "test.go"
+    assert clean_df.iloc[1]["Matched Snippet"] == "unknown"
+    assert clean_df.iloc[1]["Rule ID"] == "False"
+
+
+def test_extract_evidence_deep_fallback_hierarchy():
+    """Petty: Verify _extract_evidence drills down into all fallback CycloneDX evidence locations."""
+    # 1. Location string
+    comp1 = {
+        "evidence": {
+            "occurrences": [
+                {"location": "simple/file/path.go", "line": 15, "ruleId": "RULE-1"}
+            ]
+        }
+    }
+    ev1 = _extract_evidence(comp1)
+    assert ev1["Source Path"] == "simple/file/path.go"
+    assert ev1["Line Number"] == "15"
+    assert ev1["Rule ID"] == "RULE-1"
+
+    # 2. Source nested dict
+    comp2 = {
+        "evidence": {
+            "occurrences": [
+                {
+                    "source": {"filePath": "nested/path.py", "ruleId": "RULE-PY", "nistStandard": "FIPS 197"},
+                    "lineNumber": 99,
+                }
+            ]
+        }
+    }
+    ev2 = _extract_evidence(comp2)
+    assert ev2["Source Path"] == "nested/path.py"
+    assert ev2["Line Number"] == "99"
+    assert ev2["Rule ID"] == "RULE-PY"
+    assert ev2["NIST Standard"] == "FIPS 197"
+
+

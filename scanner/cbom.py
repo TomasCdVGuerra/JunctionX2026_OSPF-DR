@@ -69,6 +69,26 @@ class CBOMSerializer:
     @classmethod
     def _finding_value(cls, finding, name, default="unknown"):
         """Read fields from the current finding contract and legacy aliases."""
+        if name == "quantum_vulnerable":
+            val = cls._get_attribute(finding, "quantum_vulnerable", default=None)
+            if val is not None:
+                return val
+            risk = cls._get_attribute(finding, "quantum_risk", "risk_rating", default=None)
+            if risk is not None:
+                r_str = getattr(risk, "value", str(risk)).lower()
+                return r_str == "critical"
+            return default
+
+        if name == "quantum_safe":
+            val = cls._get_attribute(finding, "quantum_safe", default=None)
+            if val is not None:
+                return val
+            risk = cls._get_attribute(finding, "quantum_risk", "risk_rating", default=None)
+            if risk is not None:
+                r_str = getattr(risk, "value", str(risk)).lower()
+                return r_str == "safe"
+            return default
+
         aliases = {
             "canonical_algorithm": (
                 "canonical_algorithm",
@@ -146,9 +166,23 @@ class CBOMSerializer:
         source_type = self._stringify(
             self._finding_value(finding, "source_type")
         )
-        source_path = self._stringify(
-            self._finding_value(finding, "source_path")
-        )
+
+        # Extract source path correctly from the array: finding.evidence[0].file_path if finding.evidence else "unknown"
+        source_path = "unknown"
+        if hasattr(finding, "evidence") and finding.evidence:
+            source_path = self._stringify(finding.evidence[0].file_path)
+        elif isinstance(finding, dict) and finding.get("evidence"):
+            first_ev = finding["evidence"][0]
+            if hasattr(first_ev, "file_path"):
+                source_path = self._stringify(first_ev.file_path)
+            elif isinstance(first_ev, dict) and "file_path" in first_ev:
+                source_path = self._stringify(first_ev["file_path"])
+
+        if source_path == "unknown":
+            source_path = self._stringify(
+                self._finding_value(finding, "source_path")
+            )
+
         operation = self._stringify(
             self._finding_value(finding, "operation")
         )

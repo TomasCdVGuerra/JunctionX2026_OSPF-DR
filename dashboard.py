@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import struct
 import tempfile
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     import pandas as pd
@@ -43,9 +46,95 @@ except ImportError:  # pragma: no cover
     json_scanner = None
 
 try:
+    import scanner.cloud_scanner as cloud_scanner
+except ImportError:  # pragma: no cover
+    cloud_scanner = None
+
+try:
     import scanner.pcap_scanner as pcap_scanner
 except ImportError:  # pragma: no cover
     pcap_scanner = None
+
+
+def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
+    """Attach the scanner source label to a finding dict or model instance."""
+    if isinstance(finding, dict):
+        finding["Scanner source"] = source_label
+        finding["scanner_source"] = source_label
+    else:
+        try:
+            setattr(finding, "Scanner source", source_label)
+            setattr(finding, "scanner_source", source_label)
+        except Exception:
+            try:
+                object.__setattr__(finding, "_scanner_source", source_label)
+            except Exception:
+                pass
+
+
+def _get_finding_scanner_source(finding: Any, default: str = "unknown") -> str:
+    """Retrieve the scanner source label from a finding or component."""
+    if isinstance(finding, dict):
+        if "Scanner source" in finding:
+            return str(finding["Scanner source"])
+        if "scanner_source" in finding:
+            return str(finding["scanner_source"])
+        if "properties" in finding:
+            val = _extract_property(finding["properties"], "cryptotrace:scannerSource")
+            if val != "unknown":
+                return val
+        return default
+    val = (
+        getattr(finding, "Scanner source", None)
+        or getattr(finding, "scanner_source", None)
+        or getattr(finding, "_scanner_source", None)
+    )
+    return str(val) if val is not None else default
+
+
+def _tag_findings_scanner_source(findings: list[Any], source_label: str) -> None:
+    """Tag each finding in the list with the scanner source label."""
+    for finding in findings:
+        _set_finding_scanner_source(finding, source_label)
+
+
+def _get_cloud_scanner() -> tuple[Any, str] | None:
+    """Return (scanner_module, method_name) if a cloud scanner with a scan method exists."""
+    for mod in (cloud_scanner, json_scanner):
+        if mod is None:
+            continue
+        for method_name in ("scan_cloud_directory", "scan_directory", "scan_json_file", "scan"):
+            if hasattr(mod, method_name) and callable(getattr(mod, method_name)):
+                return mod, method_name
+    return None
+
+
+def _get_source_scanner_dir() -> tuple[Any, str] | None:
+    """Return (scanner_module, method_name) for directory scanning if available."""
+    if source_scanner is not None:
+        for method_name in ("scan_source_directory", "scan_directory", "scan"):
+            if hasattr(source_scanner, method_name) and callable(getattr(source_scanner, method_name)):
+                return source_scanner, method_name
+    return None
+
+
+def _get_source_scanner_file() -> tuple[Any, str] | None:
+    """Return (scanner_module, method_name) for file scanning if available."""
+    if source_scanner is not None:
+        for method_name in ("scan_file", "scan_source_file", "scan", "scan_source_directory"):
+            if hasattr(source_scanner, method_name) and callable(getattr(source_scanner, method_name)):
+                return source_scanner, method_name
+    return None
+
+
+def _get_pcap_scanner() -> tuple[Any, str] | None:
+    """Return (scanner_module, method_name) for pcap scanning if available."""
+    if pcap_scanner is not None:
+        for method_name in ("parse_pcap", "scan_pcap", "scan"):
+            if hasattr(pcap_scanner, method_name) and callable(getattr(pcap_scanner, method_name)):
+                return pcap_scanner, method_name
+    return None
+
 
 DEFAULT_CBOM_PATH = Path("cbom.json")
 DEFAULT_SAMPLE_DIR = Path("support-materials")
@@ -282,12 +371,35 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     if source_path == "unknown":
         source_path = evidence.get("Source Path", "unknown")
 
+    if source_path == "unknown" and "evidence" in component:
+        ev_list = component.get("evidence")
+        if isinstance(ev_list, list) and ev_list:
+            first_ev = ev_list[0]
+            if hasattr(first_ev, "file_path") and first_ev.file_path:
+                source_path = str(first_ev.file_path)
+            elif isinstance(first_ev, dict) and first_ev.get("file_path"):
+                source_path = str(first_ev["file_path"])
+
     if source_path == "unknown":
         source_path = _normalise(component.get("source"))
+
+    scanner_source = property_value("cryptotrace:scannerSource")
+    if scanner_source == "unknown":
+        scanner_source = property_value("cryptotrace:scanner_source")
+    if scanner_source == "unknown":
+        scanner_source = properties.get(
+            "Scanner source",
+            properties.get("scanner_source", "unknown"),
+        )
+    if scanner_source == "unknown" and "Scanner source" in component:
+        scanner_source = str(component["Scanner source"])
+    elif scanner_source == "unknown" and "scanner_source" in component:
+        scanner_source = str(component["scanner_source"])
 
     row = {
         "Algorithm": _normalise(component.get("name")),
         "Risk Rating": risk_rating,
+        "Scanner source": scanner_source,
         "Source Type": source_type,
         "Source Path": source_path,
         "Operation": operation,
@@ -322,6 +434,8 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
             "cryptotrace:operation",
             "cryptotrace:quantumVulnerable",
             "cryptotrace:quantumSafe",
+            "cryptotrace:scannerSource",
+            "cryptotrace:scanner_source",
         }:
             row[key] = value
 
@@ -368,25 +482,51 @@ else:
 
 
 def load_findings_dataframe(
-    cbom: dict[str, Any],
+    cbom: dict[str, Any] | list[Any],
 ):
     """Convert CBOM cryptographic components into a Pandas DataFrame."""
     if pd is None:
         raise RuntimeError("Pandas is required to build the findings table.")
 
-    components = cbom.get("components", [])
+    if isinstance(cbom, list):
+        components = cbom
+    elif isinstance(cbom, dict):
+        components = cbom.get("components", [])
+    else:
+        components = []
     if not isinstance(components, list):
         components = []
 
-    rows = [
-        _component_to_row(component)
-        for component in components
-        if isinstance(component, dict)
-    ]
+    rows = []
+    for component in components:
+        if isinstance(component, dict):
+            rows.append(_component_to_row(component))
+        elif hasattr(component, "evidence"):
+            ev_list = component.evidence
+            first_ev = ev_list[0] if ev_list else None
+            q_risk = getattr(component, "quantum_risk", None)
+            c_func = getattr(component, "crypto_function", None)
+            rows.append({
+                "Algorithm": _normalise(getattr(component, "algorithm_name", None)),
+                "Risk Rating": (q_risk.value if hasattr(q_risk, "value") else str(q_risk or "unknown")).capitalize(),
+                "Scanner source": "unknown",
+                "Source Type": _normalise(getattr(component, "source_type", None)),
+                "Source Path": getattr(first_ev, "file_path", "unknown") if first_ev else "unknown",
+                "Operation": (c_func.value if hasattr(c_func, "value") else str(c_func or "unknown")),
+                "Quantum Vulnerable": "true" if getattr(q_risk, "value", q_risk) == "critical" else "false",
+                "Quantum Safe": "true" if getattr(q_risk, "value", q_risk) == "safe" else "false",
+                "Line Number": str(getattr(first_ev, "line_number", "unknown")),
+                "Matched Snippet": _normalise(getattr(first_ev, "matched_snippet", None)),
+                "Rule ID": _normalise(getattr(first_ev, "rule_id", None)),
+                "NIST Standard": _normalise(getattr(first_ev, "nist_standard", None)),
+                "BOM Reference": "unknown",
+                "Description": _normalise(getattr(first_ev, "risk_reasoning", None)),
+            })
 
     columns = [
         "Algorithm",
         "Risk Rating",
+        "Scanner source",
         "Source Type",
         "Source Path",
         "Operation",
@@ -584,6 +724,14 @@ def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
         )
         for finding in findings:
             serializer.add_finding(finding)
+            scanner_src = _get_finding_scanner_source(finding)
+            if serializer.document.get("components"):
+                comp = serializer.document["components"][-1]
+                if isinstance(comp.get("properties"), list):
+                    comp["properties"].append({
+                        "name": "cryptotrace:scannerSource",
+                        "value": scanner_src,
+                    })
         return serializer.document
 
     return {
@@ -712,6 +860,10 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
                 "nist_standard": "none",
             })
 
+    for f in findings:
+        f["Scanner source"] = "FALLBACK heuristic"
+        f["scanner_source"] = "FALLBACK heuristic"
+
     return findings
 
 
@@ -815,6 +967,10 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
             "nist_standard": "FIPS 186-5",
         })
 
+    for f in findings:
+        f["Scanner source"] = "FALLBACK heuristic"
+        f["scanner_source"] = "FALLBACK heuristic"
+
     return findings
 
 
@@ -858,6 +1014,10 @@ def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
         "rule_id": "pcap-tls-cipher",
         "nist_standard": "FIPS 186-5",
     })
+
+    for f in findings:
+        f["Scanner source"] = "FALLBACK heuristic"
+        f["scanner_source"] = "FALLBACK heuristic"
 
     return findings
 
@@ -907,9 +1067,17 @@ def scan_uploaded_files(
         # 1. Scan cloud posture JSONs together
         if cloud_uploads:
             try:
-                if json_scanner and hasattr(json_scanner, "scan_cloud_directory"):
-                    cloud_findings = json_scanner.scan_cloud_directory(cloud_dir)
+                real_scanner = _get_cloud_scanner()
+                if real_scanner:
+                    scanner_mod, method_name = real_scanner
+                    logger.info("Using real scanner: %s (via %s) for cloud-posture", scanner_mod.__name__, method_name)
+                    method = getattr(scanner_mod, method_name)
+                    cloud_findings = method(cloud_dir)
+                    if not isinstance(cloud_findings, list):
+                        cloud_findings = [cloud_findings] if cloud_findings else []
+                    _tag_findings_scanner_source(cloud_findings, f"real: {scanner_mod.__name__}")
                 else:
+                    logger.info("Using FALLBACK heuristic for cloud-posture")
                     cloud_findings = []
                     for c_path, _ in cloud_uploads:
                         cloud_findings.extend(_scan_cloud_file_fallback(c_path))
@@ -935,9 +1103,17 @@ def scan_uploaded_files(
         # 2. Scan PCAP files
         for pcap_path, orig_name in pcap_uploads:
             try:
-                if pcap_scanner and hasattr(pcap_scanner, "parse_pcap"):
-                    pcap_findings = pcap_scanner.parse_pcap(pcap_path)
+                real_scanner = _get_pcap_scanner()
+                if real_scanner:
+                    scanner_mod, method_name = real_scanner
+                    logger.info("Using real scanner: %s (via %s) for network-capture", scanner_mod.__name__, method_name)
+                    method = getattr(scanner_mod, method_name)
+                    pcap_findings = method(pcap_path)
+                    if not isinstance(pcap_findings, list):
+                        pcap_findings = [pcap_findings] if pcap_findings else []
+                    _tag_findings_scanner_source(pcap_findings, f"real: {scanner_mod.__name__}")
                 else:
+                    logger.info("Using FALLBACK heuristic for network-capture")
                     pcap_findings = _scan_pcap_file_fallback(pcap_path)
 
                 for finding in pcap_findings:
@@ -953,9 +1129,23 @@ def scan_uploaded_files(
         # 3. Scan Source code files
         for src_path, orig_name in source_uploads:
             try:
-                if source_scanner and hasattr(source_scanner, "scan_file"):
-                    src_findings = source_scanner.scan_file(src_path)
-                else:
+                real_scanner = _get_source_scanner_file()
+                src_findings = []
+                if real_scanner:
+                    scanner_mod, method_name = real_scanner
+                    method = getattr(scanner_mod, method_name)
+                    real_results = method(src_path)
+                    if isinstance(real_results, list) and real_results:
+                        logger.info("Using real scanner: %s (via %s) for source-code", scanner_mod.__name__, method_name)
+                        _tag_findings_scanner_source(real_results, f"real: {scanner_mod.__name__}")
+                        src_findings = real_results
+                    elif src_path.suffix.lower() == ".go":
+                        logger.info("Using real scanner: %s (via %s) for source-code", scanner_mod.__name__, method_name)
+                        _tag_findings_scanner_source(real_results, f"real: {scanner_mod.__name__}")
+                        src_findings = real_results if isinstance(real_results, list) else []
+
+                if not src_findings and src_path.suffix.lower() != ".go":
+                    logger.info("Using FALLBACK heuristic for source-code: %s", orig_name)
                     src_findings = _scan_source_file_fallback(src_path)
 
                 for finding in src_findings:
@@ -988,9 +1178,18 @@ def scan_bundled_data(
 
     if sample_repos.exists():
         try:
-            if source_scanner and hasattr(source_scanner, "scan_source_directory"):
-                findings.extend(source_scanner.scan_source_directory(sample_repos))
+            real_scanner = _get_source_scanner_dir()
+            if real_scanner:
+                scanner_mod, method_name = real_scanner
+                logger.info("Using real scanner: %s (via %s) for source-code", scanner_mod.__name__, method_name)
+                method = getattr(scanner_mod, method_name)
+                src_res = method(sample_repos)
+                if not isinstance(src_res, list):
+                    src_res = [src_res] if src_res else []
+                _tag_findings_scanner_source(src_res, f"real: {scanner_mod.__name__}")
+                findings.extend(src_res)
             else:
+                logger.info("Using FALLBACK heuristic for source-code")
                 for ext in ("*.py", "*.java", "*.go"):
                     for file_p in sample_repos.rglob(ext):
                         findings.extend(_scan_source_file_fallback(file_p))
@@ -999,9 +1198,18 @@ def scan_bundled_data(
 
     if cloud_dir.exists():
         try:
-            if json_scanner and hasattr(json_scanner, "scan_cloud_directory"):
-                findings.extend(json_scanner.scan_cloud_directory(cloud_dir))
+            real_scanner = _get_cloud_scanner()
+            if real_scanner:
+                scanner_mod, method_name = real_scanner
+                logger.info("Using real scanner: %s (via %s) for cloud-posture", scanner_mod.__name__, method_name)
+                method = getattr(scanner_mod, method_name)
+                cloud_res = method(cloud_dir)
+                if not isinstance(cloud_res, list):
+                    cloud_res = [cloud_res] if cloud_res else []
+                _tag_findings_scanner_source(cloud_res, f"real: {scanner_mod.__name__}")
+                findings.extend(cloud_res)
             else:
+                logger.info("Using FALLBACK heuristic for cloud-posture")
                 for json_p in cloud_dir.glob("*.json"):
                     findings.extend(_scan_cloud_file_fallback(json_p))
         except Exception as exc:
@@ -1010,9 +1218,18 @@ def scan_bundled_data(
     if pcap_dir.exists():
         for pcap_file in pcap_dir.glob("*.pcap*"):
             try:
-                if pcap_scanner and hasattr(pcap_scanner, "parse_pcap"):
-                    findings.extend(pcap_scanner.parse_pcap(pcap_file))
+                real_scanner = _get_pcap_scanner()
+                if real_scanner:
+                    scanner_mod, method_name = real_scanner
+                    logger.info("Using real scanner: %s (via %s) for network-capture", scanner_mod.__name__, method_name)
+                    method = getattr(scanner_mod, method_name)
+                    pcap_res = method(pcap_file)
+                    if not isinstance(pcap_res, list):
+                        pcap_res = [pcap_res] if pcap_res else []
+                    _tag_findings_scanner_source(pcap_res, f"real: {scanner_mod.__name__}")
+                    findings.extend(pcap_res)
                 else:
+                    logger.info("Using FALLBACK heuristic for network-capture")
                     findings.extend(_scan_pcap_file_fallback(pcap_file))
             except Exception as exc:
                 warnings.append(f"Error scanning network capture: {exc}")
@@ -1093,6 +1310,16 @@ def render_dashboard(
         f"Generated: {timestamp}"
     )
 
+    if "Scanner source" in dataframe.columns:
+        fallback_mask = dataframe["Scanner source"] == "FALLBACK heuristic"
+        if fallback_mask.any():
+            used_types = sorted(
+                str(t)
+                for t in dataframe.loc[fallback_mask, "Source Type"].dropna().unique()
+            )
+            types_str = ", ".join(used_types) if used_types else "unknown inputs"
+            st.warning(f"⚠️ Fallback heuristic scanner used for: {types_str}")
+
     filtered_dataframe = dataframe[
         dataframe["Source Type"].isin(selected_sources)
         & dataframe["Risk Rating"].isin(selected_risks)
@@ -1157,6 +1384,7 @@ def render_dashboard(
     display_columns = [
         "Algorithm",
         "Risk Rating",
+        "Scanner source",
         "Source Type",
         "Source Path",
         "Operation",
