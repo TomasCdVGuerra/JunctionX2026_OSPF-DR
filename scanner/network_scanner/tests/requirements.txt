@@ -1,0 +1,2 @@
+# Additional dependency for the parser coverage command in README.md.
+pytest-cov>=6,<8

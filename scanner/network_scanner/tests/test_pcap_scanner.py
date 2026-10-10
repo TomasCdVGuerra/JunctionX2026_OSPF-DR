@@ -10,11 +10,13 @@ from scanner.network_scanner.parser.tshark_parser import (
 )
 
 def test_missing_pcap_file():
+    """Verifica que uma captura inexistente origina PcapParserError com uma mensagem de ficheiro nao encontrado."""
     with pytest.raises(PcapParserError) as exc_info:
         extract_tls_metadata("caminho_inexistente.pcap")
     assert "não encontrado" in str(exc_info.value)
 
 def test_normalize_tls_version():
+    """Converte versoes TLS conhecidas para nomes legiveis e preserva valores desconhecidos ou ausentes."""
     assert _normalize_tls_version("0x0303") == "TLS 1.2"
     assert _normalize_tls_version("0x0304") == "TLS 1.3"
     assert _normalize_tls_version("0x0301") == "TLS 1.0"
@@ -24,6 +26,7 @@ def test_normalize_tls_version():
 @patch("scanner.network_scanner.parser.tshark_parser.os.path.isfile", return_value=True)
 @patch("scanner.network_scanner.parser.tshark_parser._run_tshark_json")
 def test_extract_tls_metadata_client_and_server_hello(mock_run, mock_isfile):
+    """Extrai campos do ClientHello e ServerHello, distinguindo cifras anunciadas da cifra selecionada pelo servidor."""
     mock_run.return_value = [
         {
             "_source": {
@@ -78,6 +81,7 @@ def test_extract_tls_metadata_client_and_server_hello(mock_run, mock_isfile):
 @patch("scanner.network_scanner.parser.tshark_parser.os.path.isfile", return_value=True)
 @patch("scanner.network_scanner.parser.tshark_parser._run_tshark_json")
 def test_extract_ssh_metadata(mock_run, mock_isfile):
+    """Extrai o banner SSH e as listas anunciadas de troca de chaves e algoritmos de chave do servidor."""
     mock_run.return_value = [
         {
             "_source": {
@@ -104,6 +108,7 @@ def test_extract_ssh_metadata(mock_run, mock_isfile):
 @patch("scanner.network_scanner.parser.tshark_parser.os.path.isfile", return_value=True)
 @patch("scanner.network_scanner.parser.tshark_parser._run_tshark_json")
 def test_detect_cleartext_traffic(mock_run, mock_isfile):
+    """Identifica um pedido HTTP descodificado e preserva o metodo e o host nos metadados."""
     mock_run.return_value = [
         {
             "_source": {
