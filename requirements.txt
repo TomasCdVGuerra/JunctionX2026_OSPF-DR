@@ -1,9 +1,6 @@
 # QuantumTrace - shared environment: Python 3.13
 # Install with: python -m pip install -r requirements.txt
 
-# Cryptographic primitives and Hazmat parsing
-cryptography>=3.4
-
 # Shared finding models and validation
 pydantic>=2.12,<3
 
@@ -18,3 +15,6 @@ plotly>=5.18.0
 jsonschema>=4,<5
 
 # TShark is an external executable, installed separately for network scanning.
+
+# Cryptography library
+cryptography==46.0.5
