@@ -1,9 +1,50 @@
 """CycloneDX 1.6 CBOM serializer for QuantumTrace findings."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+# Hoisted from _finding_value() to avoid per-call dict allocation.
+_FINDING_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "canonical_algorithm": (
+        "canonical_algorithm",
+        "algorithm_name",
+        "algorithm",
+    ),
+    "explanation": (
+        "explanation",
+        "risk_reasoning",
+        "description",
+    ),
+    "risk_rating": (
+        "risk_rating",
+        "quantum_risk",
+        "risk",
+    ),
+    "quantum_vulnerable": (
+        "quantum_vulnerable",
+    ),
+    "quantum_safe": (
+        "quantum_safe",
+    ),
+    "source_type": (
+        "source_type",
+    ),
+    "source_path": (
+        "source_path",
+        "file_path",
+    ),
+    "operation": (
+        "operation",
+        "crypto_function",
+    ),
+}
 
 
 class CBOMSerializer:
@@ -11,13 +52,13 @@ class CBOMSerializer:
 
     def __init__(
         self,
-        scanner_name="OSPF-DR QuantumTrace",
-        version="1.0.0",
-    ):
+        scanner_name: str = "OSPF-DR QuantumTrace",
+        version: str = "1.0.0",
+    ) -> None:
         self.scanner_name = scanner_name
         self.version = version
 
-        self.document = {
+        self.document: dict[str, Any] = {
             "bomFormat": "CycloneDX",
             "specVersion": "1.6",
             "serialNumber": f"urn:uuid:{uuid.uuid4()}",
@@ -40,7 +81,7 @@ class CBOMSerializer:
         self._used_bom_refs: set[str] = set()
 
     @staticmethod
-    def _current_utc_timestamp():
+    def _current_utc_timestamp() -> str:
         """Return the current UTC timestamp in ISO 8601 format."""
         return (
             datetime.now(timezone.utc)
@@ -49,12 +90,12 @@ class CBOMSerializer:
         )
 
     @staticmethod
-    def _unwrap_enum(value):
+    def _unwrap_enum(value: Any) -> Any:
         """Return Enum.value when the supplied value is Enum-like."""
         return getattr(value, "value", value)
 
     @classmethod
-    def _get_attribute(cls, finding, *names, default="unknown"):
+    def _get_attribute(cls, finding: Any, *names: str, default: Any = "unknown") -> Any:
         """Read the first available attribute or dictionary key from a finding."""
         for name in names:
             if isinstance(finding, dict):
@@ -68,7 +109,7 @@ class CBOMSerializer:
         return default
 
     @classmethod
-    def _finding_value(cls, finding, name, default="unknown"):
+    def _finding_value(cls, finding: Any, name: str, default: Any = "unknown") -> Any:
         """Read fields from the current finding contract and legacy aliases."""
         if name == "quantum_vulnerable":
             val = cls._get_attribute(finding, "quantum_vulnerable", default=None)
@@ -90,46 +131,11 @@ class CBOMSerializer:
                 return r_str == "safe"
             return default
 
-        aliases = {
-            "canonical_algorithm": (
-                "canonical_algorithm",
-                "algorithm_name",
-                "algorithm",
-            ),
-            "explanation": (
-                "explanation",
-                "risk_reasoning",
-                "description",
-            ),
-            "risk_rating": (
-                "risk_rating",
-                "quantum_risk",
-                "risk",
-            ),
-            "quantum_vulnerable": (
-                "quantum_vulnerable",
-            ),
-            "quantum_safe": (
-                "quantum_safe",
-            ),
-            "source_type": (
-                "source_type",
-            ),
-            "source_path": (
-                "source_path",
-                "file_path",
-            ),
-            "operation": (
-                "operation",
-                "crypto_function",
-            ),
-        }
-
-        names = aliases.get(name, (name,))
+        names = _FINDING_FIELD_ALIASES.get(name, (name,))
         return cls._get_attribute(finding, *names, default=default)
 
     @staticmethod
-    def _stringify(value):
+    def _stringify(value: Any) -> str:
         """Convert values to the string representation required by CBOM."""
         if isinstance(value, bool):
             return "true" if value else "false"
@@ -139,7 +145,7 @@ class CBOMSerializer:
 
         return str(value)
 
-    def add_finding(self, finding):
+    def add_finding(self, finding: Any) -> None:
         """Convert one finding into a CycloneDX cryptographic component."""
         canonical_algorithm = self._stringify(
             self._finding_value(finding, "canonical_algorithm")
@@ -236,7 +242,7 @@ class CBOMSerializer:
             counter += 1
         self._used_bom_refs.add(unique_ref)
 
-        component = {
+        component: dict[str, Any] = {
             "type": "cryptographic-asset",
             "bom-ref": unique_ref,
             "name": canonical_algorithm,
@@ -271,7 +277,7 @@ class CBOMSerializer:
 
         self.document["components"].append(component)
 
-    def to_json(self, filepath=None):
+    def to_json(self, filepath: str | Path | None = None) -> str:
         """Serialize the CBOM and optionally write it to disk."""
         serialized = json.dumps(
             self.document,

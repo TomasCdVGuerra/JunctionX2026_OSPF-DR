@@ -2,18 +2,10 @@
 
 import json
 from enum import Enum
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 import dashboard
 from dashboard import (
-    CRITICAL_WEIGHT,
-    DEFAULT_CBOM_PATH,
-    MEDIUM_WEIGHT,
-    RISK_COLORS,
-    RISK_ORDER,
     _build_cbom_from_findings,
     _component_to_row,
     _extract_evidence,

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-import struct
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -65,10 +63,10 @@ def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
         try:
             setattr(finding, "Scanner source", source_label)
             setattr(finding, "scanner_source", source_label)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             try:
                 object.__setattr__(finding, "_scanner_source", source_label)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 pass
 
 
@@ -749,7 +747,7 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
 
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return findings
 
     lines = content.splitlines()
@@ -880,7 +878,7 @@ def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
     try:
         content = path.read_text(encoding="utf-8")
         data = json.loads(content)
-    except Exception:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return findings
 
     if not isinstance(data, dict):
@@ -1013,7 +1011,7 @@ def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
 
     try:
         raw_bytes = path.read_bytes()
-    except Exception:
+    except OSError:
         return findings
 
     if not raw_bytes:
@@ -1174,7 +1172,12 @@ def scan_uploaded_files(
                 if real_scanner:
                     scanner_mod, method_name = real_scanner
                     method = getattr(scanner_mod, method_name)
-                    real_results = method(src_path)
+                    try:
+                        real_results = method(src_path)
+                    except Exception as exc:
+                        warnings.append(f"Error scanning {orig_name}: {exc}")
+                        real_results = []
+
                     if isinstance(real_results, list) and real_results:
                         logger.info("Using real scanner: %s (via %s) for source-code", scanner_mod.__name__, method_name)
                         _tag_findings_scanner_source(real_results, f"real: {scanner_mod.__name__}")

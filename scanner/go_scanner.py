@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
 from scanner.utils import (
@@ -229,7 +228,7 @@ def detect_custom_kdf(
 
     # Determine key length if iterations/keyLen const is present
     key_len_val = resolve_go_constant(cleaned_text, "keyLen")
-    key_size = 256
+    key_size: int | None = None
     if key_len_val.isdigit():
         bits = infer_key_size_from_literal(key_len_val)
         if bits.isdigit():
@@ -318,7 +317,7 @@ def scan_go_file(
 
     try:
         source_text = filepath.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return []
 
     try:
