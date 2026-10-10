@@ -14,6 +14,7 @@ from dashboard import (
     MEDIUM_WEIGHT,
     RISK_COLORS,
     RISK_ORDER,
+    _build_cbom_from_findings,
     _component_to_row,
     _extract_evidence,
     _extract_native_crypto_properties,
@@ -27,12 +28,24 @@ from dashboard import (
     _safe_text_columns,
     load_findings_dataframe,
     render_dashboard,
+    scan_uploaded_files,
 )
 
 
 class MockEnum(Enum):
     SIGN = "SIGN_VERIFY"
     ENCRYPT = "ENCRYPT_DECRYPT"
+
+
+class MockUploadedFile:
+    """Mock for Streamlit UploadedFile."""
+
+    def __init__(self, name: str, content: bytes | str):
+        self.name = name
+        self.content = content.encode("utf-8") if isinstance(content, str) else content
+
+    def getvalue(self) -> bytes:
+        return self.content
 
 
 # --- Unit Tests for Normalization & Extraction Helpers ---
@@ -143,7 +156,6 @@ def test_extract_evidence_line_zero():
 
 
 def test_extract_evidence_fallbacks():
-    # Test nested dict location & source
     comp = {
         "evidence": {
             "occurrences": [
@@ -322,14 +334,118 @@ def test_dashboard_renders_with_mock_st():
 
         render_dashboard(sample_cbom, cbom_path="test_cbom.json")
 
-        # Verify header rendered
         mock_st.title.assert_called_with("QuantumTrace Cryptographic Risk Dashboard")
         mock_st.dataframe.assert_called()
 
 
-def test_main_handles_missing_cbom(tmp_path):
-    """Verify main() shows warning when cbom.json does not exist."""
+def test_main_startup_without_cbom(tmp_path):
+    """Verify main() starts up cleanly in empty state when cbom.json does not exist."""
     with patch("dashboard.DEFAULT_CBOM_PATH", tmp_path / "nonexistent.json"):
         with patch("dashboard.st") as mock_st:
+            mock_st.session_state = {}
+            mock_st.file_uploader.return_value = None
+            mock_st.button.return_value = False
             dashboard.main()
-            mock_st.warning.assert_called()
+            mock_st.set_page_config.assert_called_once()
+            mock_st.info.assert_called_once()
+
+
+def test_scan_uploaded_files_python():
+    """Verify multiple Python files can be uploaded, scanned, and original paths preserved."""
+    files = [
+        MockUploadedFile("auth.py", "import hashlib\ndef h(p): return hashlib.md5(p)"),
+        MockUploadedFile("crypto_keys.py", "from cryptography.hazmat.primitives.asymmetric import rsa\nk = rsa.generate_private_key(65537, 2048)"),
+    ]
+    cbom, warnings = scan_uploaded_files(files)
+    assert cbom is not None
+    assert "components" in cbom
+    assert len(cbom["components"]) >= 2
+    paths = [
+        next((p["value"] for p in c.get("properties", []) if p["name"] == "cryptotrace:sourcePath"), "")
+        for c in cbom["components"]
+    ]
+    assert "auth.py" in paths
+    assert "crypto_keys.py" in paths
+
+
+def test_scan_uploaded_files_mixed_routing():
+    """Verify mixed uploads (Python, Java, Go, JSON) route to appropriate scanners."""
+    files = [
+        MockUploadedFile("service.py", "import hashlib\nhashlib.sha1(b'x')"),
+        MockUploadedFile("Receipt.java", "KeyPairGenerator.getInstance(\"RSA\");"),
+        MockUploadedFile("main.go", "package main\nimport \"crypto/md5\"\nfunc f() { md5.New() }"),
+        MockUploadedFile("kms.json", json.dumps({"Keys": [{"KeySpec": "RSA_2048", "KeyArn": "arn:123"}]})),
+    ]
+    cbom, warnings = scan_uploaded_files(files)
+    assert cbom is not None
+    assert len(cbom["components"]) >= 4
+    source_types = {
+        next((p["value"] for p in c.get("properties", []) if p["name"] == "cryptotrace:sourceType"), "")
+        for c in cbom["components"]
+    }
+    assert "source-code" in source_types
+    assert "cloud-posture" in source_types
+
+
+def test_scan_uploaded_files_malformed_resilience():
+    """Verify a malformed upload does not crash scanning of other valid files."""
+    files = [
+        MockUploadedFile("invalid.xyz", "unsupported binary data"),
+        MockUploadedFile("valid.py", "import hashlib\nhashlib.md5(b'123')"),
+    ]
+    cbom, warnings = scan_uploaded_files(files)
+    assert cbom is not None
+    assert len(cbom["components"]) >= 1
+    assert any("invalid.xyz" in w for w in warnings)
+
+
+def test_scan_uploaded_files_empty():
+    """Verify scanning with empty uploads list returns warning."""
+    cbom, warnings = scan_uploaded_files([])
+    assert cbom is None
+    assert len(warnings) > 0
+
+
+def test_cbom_generation_in_memory():
+    """Verify CBOM JSON structure is generated in memory after scanning."""
+    findings = [
+        {
+            "canonical_algorithm": "RSA-2048",
+            "risk_rating": "Critical",
+            "source_type": "source-code",
+            "source_path": "main.py",
+            "operation": "KEYGEN",
+        }
+    ]
+    cbom = _build_cbom_from_findings(findings)
+    assert cbom["bomFormat"] == "CycloneDX"
+    assert cbom["specVersion"] == "1.6"
+    assert len(cbom["components"]) == 1
+
+
+def test_search_with_regex_metacharacters():
+    """Verify literal search safely handles regex special characters without error."""
+    sample_cbom = {
+        "components": [
+            {
+                "name": "RSA (2048)",
+                "description": "Legacy public key + [padding] * 2",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:sourcePath", "value": "path/file.py"},
+                ],
+            }
+        ]
+    }
+    df = _safe_text_columns(load_findings_dataframe(sample_cbom))
+
+    # Test problematic regex metacharacters
+    for test_query in ("RSA (2048)", "[", "+", "*", "SHA-1", "\\"):
+        query = test_query.casefold()
+        mask = (
+            df["Algorithm"].str.casefold().str.contains(query, regex=False, na=False)
+            | df["Description"].str.casefold().str.contains(query, regex=False, na=False)
+        )
+        filtered = df[mask]
+        assert isinstance(filtered, object)

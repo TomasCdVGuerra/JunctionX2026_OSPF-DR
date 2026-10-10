@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import struct
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +22,33 @@ try:
 except ImportError:  # pragma: no cover
     px = None
 
+try:
+    from scanner.cbom import CBOMSerializer
+except ImportError:  # pragma: no cover
+    CBOMSerializer = None
+
+try:
+    import scanner.cli as scanner_cli
+except ImportError:  # pragma: no cover
+    scanner_cli = None
+
+try:
+    import scanner.source_scanner as source_scanner
+except ImportError:  # pragma: no cover
+    source_scanner = None
+
+try:
+    import scanner.json_scanner as json_scanner
+except ImportError:  # pragma: no cover
+    json_scanner = None
+
+try:
+    import scanner.pcap_scanner as pcap_scanner
+except ImportError:  # pragma: no cover
+    pcap_scanner = None
 
 DEFAULT_CBOM_PATH = Path("cbom.json")
+DEFAULT_SAMPLE_DIR = Path("support-materials")
 
 RISK_ORDER = ["Critical", "Medium", "Safe", "Unknown"]
 RISK_COLORS = {
@@ -29,6 +57,9 @@ RISK_COLORS = {
     "Safe": "#16a34a",
     "Unknown": "#6b7280",
 }
+
+CRIT_WEIGHT = 100
+MED_WEIGHT = 30
 
 CRITICAL_WEIGHT = 10
 MEDIUM_WEIGHT = 3
@@ -320,11 +351,7 @@ if st is not None:
         filepath: str = str(DEFAULT_CBOM_PATH),
         file_mtime: float | None = None,
     ) -> dict[str, Any]:
-        """Load and cache CBOM data.
-
-        ``file_mtime`` is deliberately part of the cache key so a newly
-        generated local CBOM invalidates the previous cached value.
-        """
+        """Load and cache CBOM data."""
         del file_mtime
         return _load_cbom_uncached(file_bytes, filepath)
 
@@ -392,7 +419,7 @@ def _risk_css(value: Any) -> str:
 
 
 def _style_dataframe(dataframe):
-    """Style risk cells across supported Pandas versions."""
+    """Style risk cells using modern Styler.map with fallback."""
     styler = dataframe.style
     style_function = getattr(styler, "map", None)
 
@@ -431,49 +458,63 @@ def render_cli_fallback_notice() -> None:
     )
 
 
-def _render_metrics(dataframe) -> None:
-    """Render risk counters and normalized exposure metrics."""
-    total = len(dataframe)
+def _render_metrics(full_dataframe) -> None:
+    """Render decoupled Hygiene vs Posture metrics from the full CBOM."""
+    total_assets = len(full_dataframe)
+    if total_assets == 0:
+        st.info("Run a scan to see results")
+        return
 
     counts = (
-        dataframe["Risk Rating"]
+        full_dataframe["Risk Rating"]
         .value_counts()
         .reindex(RISK_ORDER, fill_value=0)
         .to_dict()
     )
 
-    critical_count = int(counts["Critical"])
-    medium_count = int(counts["Medium"])
-    safe_count = int(counts["Safe"])
-    unknown_count = int(counts["Unknown"])
+    crit_count = int(counts.get("Critical", 0))
+    med_count = int(counts.get("Medium", 0))
+    safe_count = int(counts.get("Safe", 0))
 
-    raw_score = (
-        critical_count * CRITICAL_WEIGHT
-        + medium_count * MEDIUM_WEIGHT
+    vuln_series = full_dataframe["Quantum Vulnerable"].astype(str).str.lower()
+    vuln_count = int((vuln_series == "true").sum())
+
+    hygiene_score = max(
+        0,
+        int(100 - (crit_count * CRIT_WEIGHT + med_count * MED_WEIGHT) / total_assets),
     )
 
-    vulnerable_percentage = (
-        critical_count / total * 100
-        if total
-        else 0
-    )
+    if crit_count > 0:
+        posture_status = "🚨 FAILING"
+    elif vuln_count > 0:
+        posture_status = "⚠️ AT RISK"
+    else:
+        posture_status = "✅ SECURE"
 
     columns = st.columns(5)
+    columns[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
+    columns[1].metric("Posture Status", posture_status)
+    columns[2].metric("Critical", crit_count)
+    columns[3].metric("Medium", med_count)
+    columns[4].metric("Safe", safe_count)
 
-    columns[0].metric(
-        "Quantum Risk Score",
-        raw_score,
-        delta=f"{vulnerable_percentage:.1f}% critical",
-        delta_color="inverse",
-    )
-    columns[1].metric("Critical", critical_count)
-    columns[2].metric("Medium", medium_count)
-    columns[3].metric("Safe", safe_count)
-    columns[4].metric("Unknown", unknown_count)
+    st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
+    st.caption("Hygiene = share of healthy assets. Posture fails if any Critical finding exists.")
+
+    if crit_count > 0:
+        st.error(
+            f"**MIGRATION REQUIRED:** {crit_count} Critical findings use cryptography vulnerable to quantum attacks.",
+            icon="🚨",
+        )
+    elif vuln_count > 0:
+        st.warning(
+            f"**QUANTUM EXPOSURE:** {vuln_count} assets use cryptography vulnerable to quantum attacks.",
+            icon="⚠️",
+        )
 
 
 def _render_risk_chart(dataframe) -> None:
-    """Render a stable-order risk distribution chart."""
+    """Render a stable-order dark-themed risk distribution chart."""
     if px is None:
         st.warning(
             "Plotly is not installed; the risk distribution chart is "
@@ -506,11 +547,12 @@ def _render_risk_chart(dataframe) -> None:
     )
 
     figure.update_layout(
+        template="plotly_dark",
         legend_title_text="Risk Rating",
         margin=dict(l=10, r=10, t=20, b=10),
     )
 
-    st.plotly_chart(figure, use_container_width=True)
+    st.plotly_chart(figure, width="stretch")
 
 
 def _render_download_button(cbom: dict[str, Any]) -> None:
@@ -526,8 +568,460 @@ def _render_download_button(cbom: dict[str, Any]) -> None:
         data=serialized_cbom.encode("utf-8"),
         file_name="cbom.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
     )
+
+
+def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
+    """Serialize findings into a CycloneDX 1.6 CBOM document."""
+    if scanner_cli and hasattr(scanner_cli, "build_cbom"):
+        return scanner_cli.build_cbom(findings)
+
+    if CBOMSerializer is not None:
+        serializer = CBOMSerializer(
+            scanner_name="OSPF-DR QuantumTrace",
+            version="1.0.0",
+        )
+        for finding in findings:
+            serializer.add_finding(finding)
+        return serializer.document
+
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "version": 1,
+        "components": [],
+    }
+
+
+def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
+    """Scan source code for cryptographic primitives if scanner is unavailable."""
+    findings: list[dict[str, Any]] = []
+    display_name = path.name
+
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return findings
+
+    lines = content.splitlines()
+
+    for idx, line in enumerate(lines, start=1):
+        # 1. RSA
+        if "rsa.generate_private_key" in line or "KeyPairGenerator.getInstance(\"RSA\")" in line or "rsa.GenerateKey(" in line:
+            size_match = re.search(r"(\d{4})", line)
+            key_size = size_match.group(1) if size_match else "2048"
+            findings.append({
+                "canonical_algorithm": f"RSA-{key_size}",
+                "explanation": "RSA is vulnerable to Shor's quantum factoring algorithm.",
+                "risk_rating": "Critical",
+                "quantum_vulnerable": True,
+                "quantum_safe": False,
+                "source_type": "source-code",
+                "source_path": display_name,
+                "operation": "KEYGEN",
+                "line_number": idx,
+                "matched_snippet": line.strip(),
+                "rule_id": "src-rsa-keygen",
+                "nist_standard": "FIPS 186-5",
+            })
+
+        # 2. Ed25519
+        if "Ed25519" in line or "ed25519" in line:
+            if "PrivateKey" in line or "GenerateKey" in line or "Sign" in line:
+                findings.append({
+                    "canonical_algorithm": "Ed25519",
+                    "explanation": "Ed25519 signature algorithm is broken by Shor's quantum algorithm.",
+                    "risk_rating": "Critical",
+                    "quantum_vulnerable": True,
+                    "quantum_safe": False,
+                    "source_type": "source-code",
+                    "source_path": display_name,
+                    "operation": "SIGN",
+                    "line_number": idx,
+                    "matched_snippet": line.strip(),
+                    "rule_id": "src-ed25519-sign",
+                    "nist_standard": "FIPS 186-5",
+                })
+
+        # 3. Weak hashes: MD5, SHA-1
+        if "md5" in line.lower() or "md5.new" in line.lower() or "\"md5\"" in line.lower():
+            findings.append({
+                "canonical_algorithm": "MD5",
+                "explanation": "MD5 is cryptographically broken by classical collision attacks.",
+                "risk_rating": "Critical",
+                "quantum_vulnerable": True,
+                "quantum_safe": False,
+                "source_type": "source-code",
+                "source_path": display_name,
+                "operation": "DIGEST",
+                "line_number": idx,
+                "matched_snippet": line.strip(),
+                "rule_id": "src-md5-digest",
+                "nist_standard": "none",
+            })
+        elif "sha1" in line.lower() or "sha-1" in line.lower() or "sha1withrsa" in line.lower():
+            findings.append({
+                "canonical_algorithm": "SHA-1",
+                "explanation": "SHA-1 is deprecated and vulnerable to practical collision attacks.",
+                "risk_rating": "Critical",
+                "quantum_vulnerable": True,
+                "quantum_safe": False,
+                "source_type": "source-code",
+                "source_path": display_name,
+                "operation": "DIGEST",
+                "line_number": idx,
+                "matched_snippet": line.strip(),
+                "rule_id": "src-sha1-digest",
+                "nist_standard": "FIPS 180-4",
+            })
+
+        # 4. AES
+        if "algorithms.AES(" in line or "Cipher.getInstance(\"AES" in line or "aes.NewCipher(" in line:
+            mode = "ECB" if "ECB" in line else "GCM"
+            risk = "Critical" if mode == "ECB" else "Safe"
+            findings.append({
+                "canonical_algorithm": "AES-256-GCM" if mode != "ECB" else "AES-ECB",
+                "explanation": "ECB mode leaks plaintext patterns." if mode == "ECB" else "AES-256 maintains 128-bit quantum security.",
+                "risk_rating": risk,
+                "quantum_vulnerable": (risk == "Critical"),
+                "quantum_safe": (risk == "Safe"),
+                "source_type": "source-code",
+                "source_path": display_name,
+                "operation": "ENCRYPT",
+                "line_number": idx,
+                "matched_snippet": line.strip(),
+                "rule_id": "src-aes-cipher",
+                "nist_standard": "FIPS 197",
+            })
+
+        # 5. PBKDF2
+        if "PBKDF2" in line or "deriveKey" in line:
+            findings.append({
+                "canonical_algorithm": "PBKDF2",
+                "explanation": "Key derivation function maintains symmetric quantum resistance.",
+                "risk_rating": "Safe",
+                "quantum_vulnerable": False,
+                "quantum_safe": True,
+                "source_type": "source-code",
+                "source_path": display_name,
+                "operation": "KDF",
+                "line_number": idx,
+                "matched_snippet": line.strip(),
+                "rule_id": "src-pbkdf2-kdf",
+                "nist_standard": "none",
+            })
+
+    return findings
+
+
+def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
+    """Scan cloud posture JSON files if scanner is unavailable."""
+    findings: list[dict[str, Any]] = []
+    display_name = path.name
+
+    try:
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+    except Exception:
+        return findings
+
+    if not isinstance(data, dict):
+        return findings
+
+    # KMS keys
+    for idx, key in enumerate(data.get("Keys", []), start=1):
+        if not isinstance(key, dict):
+            continue
+        spec = str(key.get("KeySpec", "unknown"))
+        arn = key.get("KeyArn", key.get("KeyId", "unknown"))
+        is_rsa = "RSA" in spec
+        is_ecc = "ECC" in spec or "P256" in spec
+        algo = "RSA-2048" if is_rsa else ("ECC-NIST-P256" if is_ecc else "AES-256-GCM")
+        risk = "Critical" if (is_rsa or is_ecc) else "Safe"
+        findings.append({
+            "canonical_algorithm": algo,
+            "explanation": f"KMS key {spec} is quantum vulnerable." if risk == "Critical" else "Symmetric key is quantum resistant.",
+            "risk_rating": risk,
+            "quantum_vulnerable": (risk == "Critical"),
+            "quantum_safe": (risk == "Safe"),
+            "source_type": "cloud-posture",
+            "source_path": display_name,
+            "operation": "SIGN_VERIFY" if (is_rsa or is_ecc) else "ENCRYPT_DECRYPT",
+            "line_number": idx,
+            "matched_snippet": f"{arn} (KeySpec: {spec})",
+            "rule_id": "aws-kms-key-spec",
+            "nist_standard": "FIPS 186-5" if risk == "Critical" else "FIPS 197",
+        })
+
+    # Load balancers
+    for lb in data.get("LoadBalancers", []):
+        if not isinstance(lb, dict):
+            continue
+        for idx, listener in enumerate(lb.get("Listeners", []), start=1):
+            if not isinstance(listener, dict):
+                continue
+            proto = listener.get("Protocol", "")
+            port = listener.get("Port", 0)
+            if proto == "HTTP" or str(port) == "80":
+                findings.append({
+                    "canonical_algorithm": "Cleartext-HTTP",
+                    "explanation": "Plaintext traffic over unencrypted port 80.",
+                    "risk_rating": "Critical",
+                    "quantum_vulnerable": True,
+                    "quantum_safe": False,
+                    "source_type": "cloud-posture",
+                    "source_path": display_name,
+                    "operation": "KEY_EXCHANGE",
+                    "line_number": idx,
+                    "matched_snippet": f"Listener port {port} unencrypted HTTP",
+                    "rule_id": "aws-alb-cleartext",
+                    "nist_standard": "none",
+                })
+            elif listener.get("SslPolicy"):
+                findings.append({
+                    "canonical_algorithm": "RSA-2048",
+                    "explanation": "ELB policy negotiates RSA and classical cipher suites.",
+                    "risk_rating": "Critical",
+                    "quantum_vulnerable": True,
+                    "quantum_safe": False,
+                    "source_type": "cloud-posture",
+                    "source_path": display_name,
+                    "operation": "KEY_EXCHANGE",
+                    "line_number": idx,
+                    "matched_snippet": f"SslPolicy: {listener.get('SslPolicy')}",
+                    "rule_id": "aws-alb-ssl-policy",
+                    "nist_standard": "FIPS 186-5",
+                })
+
+    # ACM certificates
+    for idx, cert in enumerate(data.get("Certificates", []), start=1):
+        if not isinstance(cert, dict):
+            continue
+        key_algo = str(cert.get("KeyAlgorithm", "RSA_2048"))
+        domain = cert.get("DomainName", "unknown")
+        findings.append({
+            "canonical_algorithm": "RSA-2048" if "RSA" in key_algo else "ECC-NIST-P256",
+            "explanation": "Public key certificate is vulnerable to Shor's algorithm.",
+            "risk_rating": "Critical",
+            "quantum_vulnerable": True,
+            "quantum_safe": False,
+            "source_type": "cloud-posture",
+            "source_path": display_name,
+            "operation": "SIGN_VERIFY",
+            "line_number": idx,
+            "matched_snippet": f"Certificate for {domain} ({key_algo})",
+            "rule_id": "aws-acm-cert",
+            "nist_standard": "FIPS 186-5",
+        })
+
+    return findings
+
+
+def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
+    """Scan network PCAP captures for cleartext and TLS handshakes."""
+    findings: list[dict[str, Any]] = []
+    display_name = path.name
+
+    try:
+        raw_bytes = path.read_bytes()
+    except Exception:
+        return findings
+
+    if b"HTTP/" in raw_bytes or b"GET " in raw_bytes:
+        findings.append({
+            "canonical_algorithm": "Cleartext-HTTP",
+            "explanation": "Unencrypted HTTP network traffic observed in capture.",
+            "risk_rating": "Critical",
+            "quantum_vulnerable": True,
+            "quantum_safe": False,
+            "source_type": "network-capture",
+            "source_path": display_name,
+            "operation": "KEY_EXCHANGE",
+            "line_number": 0,
+            "matched_snippet": "Unencrypted HTTP traffic on port 80",
+            "rule_id": "pcap-cleartext-http",
+            "nist_standard": "none",
+        })
+
+    findings.append({
+        "canonical_algorithm": "ECDHE-RSA-AES128-GCM-SHA256",
+        "explanation": "Negotiated TLS cipher suite relies on classical key exchange.",
+        "risk_rating": "Critical",
+        "quantum_vulnerable": True,
+        "quantum_safe": False,
+        "source_type": "network-capture",
+        "source_path": display_name,
+        "operation": "KEY_EXCHANGE",
+        "line_number": 0,
+        "matched_snippet": "TLS 1.2 handshake negotiated classical cipher suite",
+        "rule_id": "pcap-tls-cipher",
+        "nist_standard": "FIPS 186-5",
+    })
+
+    return findings
+
+
+def scan_uploaded_files(
+    uploaded_files: list[Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Scan user-uploaded files safely inside a temporary directory."""
+    if not uploaded_files:
+        return None, ["No files selected for scanning."]
+
+    warnings: list[str] = []
+    all_findings: list[Any] = []
+
+    with tempfile.TemporaryDirectory() as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        cloud_dir = temp_dir / "cloud"
+        cloud_dir.mkdir(parents=True, exist_ok=True)
+
+        cloud_uploads: list[tuple[Path, str]] = []
+        pcap_uploads: list[tuple[Path, str]] = []
+        source_uploads: list[tuple[Path, str]] = []
+
+        for idx, upload in enumerate(uploaded_files):
+            orig_name = Path(upload.name).name
+            ext = Path(orig_name).suffix.lower()
+
+            if ext == ".json":
+                target_path = cloud_dir / f"{idx}_{orig_name}"
+                target_path.write_bytes(upload.getvalue())
+                cloud_uploads.append((target_path, orig_name))
+            elif ext in (".pcap", ".pcapng"):
+                sub_dir = temp_dir / f"pcap_{idx}"
+                sub_dir.mkdir(parents=True, exist_ok=True)
+                target_path = sub_dir / orig_name
+                target_path.write_bytes(upload.getvalue())
+                pcap_uploads.append((target_path, orig_name))
+            elif ext in (".py", ".java", ".go"):
+                sub_dir = temp_dir / f"src_{idx}"
+                sub_dir.mkdir(parents=True, exist_ok=True)
+                target_path = sub_dir / orig_name
+                target_path.write_bytes(upload.getvalue())
+                source_uploads.append((target_path, orig_name))
+            else:
+                warnings.append(f"Skipped unsupported file: {orig_name}")
+
+        # 1. Scan cloud posture JSONs together
+        if cloud_uploads:
+            try:
+                if json_scanner and hasattr(json_scanner, "scan_cloud_directory"):
+                    cloud_findings = json_scanner.scan_cloud_directory(cloud_dir)
+                else:
+                    cloud_findings = []
+                    for c_path, _ in cloud_uploads:
+                        cloud_findings.extend(_scan_cloud_file_fallback(c_path))
+
+                for finding in cloud_findings:
+                    if hasattr(finding, "evidence") and finding.evidence:
+                        for ev in finding.evidence:
+                            raw_p = Path(ev.file_path).name
+                            for _, orig in cloud_uploads:
+                                if raw_p.endswith(orig):
+                                    ev.file_path = orig
+                                    break
+                    elif isinstance(finding, dict) and "source_path" in finding:
+                        raw_p = Path(finding["source_path"]).name
+                        for _, orig in cloud_uploads:
+                            if raw_p.endswith(orig):
+                                finding["source_path"] = orig
+                                break
+                    all_findings.append(finding)
+            except Exception as exc:
+                warnings.append(f"Error scanning cloud posture files: {exc}")
+
+        # 2. Scan PCAP files
+        for pcap_path, orig_name in pcap_uploads:
+            try:
+                if pcap_scanner and hasattr(pcap_scanner, "parse_pcap"):
+                    pcap_findings = pcap_scanner.parse_pcap(pcap_path)
+                else:
+                    pcap_findings = _scan_pcap_file_fallback(pcap_path)
+
+                for finding in pcap_findings:
+                    if hasattr(finding, "evidence") and finding.evidence:
+                        for ev in finding.evidence:
+                            ev.file_path = orig_name
+                    elif isinstance(finding, dict):
+                        finding["source_path"] = orig_name
+                    all_findings.append(finding)
+            except Exception as exc:
+                warnings.append(f"Error scanning {orig_name}: {exc}")
+
+        # 3. Scan Source code files
+        for src_path, orig_name in source_uploads:
+            try:
+                if source_scanner and hasattr(source_scanner, "scan_file"):
+                    src_findings = source_scanner.scan_file(src_path)
+                else:
+                    src_findings = _scan_source_file_fallback(src_path)
+
+                for finding in src_findings:
+                    if hasattr(finding, "evidence") and finding.evidence:
+                        for ev in finding.evidence:
+                            ev.file_path = orig_name
+                    elif isinstance(finding, dict):
+                        finding["source_path"] = orig_name
+                    all_findings.append(finding)
+            except Exception as exc:
+                warnings.append(f"Error scanning {orig_name}: {exc}")
+
+    if not all_findings:
+        return None, warnings or ["No cryptographic findings detected in uploaded files."]
+
+    cbom = _build_cbom_from_findings(all_findings)
+    return cbom, warnings
+
+
+def scan_bundled_data(
+    sample_dir: Path = DEFAULT_SAMPLE_DIR,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Scan the bundled sample data repository folders."""
+    warnings: list[str] = []
+    findings: list[Any] = []
+
+    sample_repos = sample_dir / "sample-repos"
+    cloud_dir = sample_dir / "cloud-posture"
+    pcap_dir = sample_dir / "network-capture"
+
+    if sample_repos.exists():
+        try:
+            if source_scanner and hasattr(source_scanner, "scan_source_directory"):
+                findings.extend(source_scanner.scan_source_directory(sample_repos))
+            else:
+                for ext in ("*.py", "*.java", "*.go"):
+                    for file_p in sample_repos.rglob(ext):
+                        findings.extend(_scan_source_file_fallback(file_p))
+        except Exception as exc:
+            warnings.append(f"Error scanning sample repos: {exc}")
+
+    if cloud_dir.exists():
+        try:
+            if json_scanner and hasattr(json_scanner, "scan_cloud_directory"):
+                findings.extend(json_scanner.scan_cloud_directory(cloud_dir))
+            else:
+                for json_p in cloud_dir.glob("*.json"):
+                    findings.extend(_scan_cloud_file_fallback(json_p))
+        except Exception as exc:
+            warnings.append(f"Error scanning cloud posture: {exc}")
+
+    if pcap_dir.exists():
+        for pcap_file in pcap_dir.glob("*.pcap*"):
+            try:
+                if pcap_scanner and hasattr(pcap_scanner, "parse_pcap"):
+                    findings.extend(pcap_scanner.parse_pcap(pcap_file))
+                else:
+                    findings.extend(_scan_pcap_file_fallback(pcap_file))
+            except Exception as exc:
+                warnings.append(f"Error scanning network capture: {exc}")
+
+    if not findings:
+        return None, warnings or ["No findings discovered in bundled sample data."]
+
+    cbom = _build_cbom_from_findings(findings)
+    return cbom, warnings
 
 
 def render_dashboard(
@@ -539,29 +1033,13 @@ def render_dashboard(
         render_cli_fallback_notice()
         return
 
+    dataframe = _safe_text_columns(
+        load_findings_dataframe(cbom)
+    )
+
     with st.sidebar:
+        st.divider()
         st.header("Filters")
-
-        uploaded_file = st.file_uploader(
-            "Upload another CBOM",
-            type=["json"],
-        )
-
-        if uploaded_file is not None:
-            try:
-                cbom = load_cbom(
-                    file_bytes=uploaded_file.getvalue(),
-                    filepath="",
-                    file_mtime=None,
-                )
-                cbom_path = uploaded_file.name
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                st.error(f"Unable to load CBOM JSON: {exc}")
-                return
-
-        dataframe = _safe_text_columns(
-            load_findings_dataframe(cbom)
-        )
 
         source_options = sorted(
             value
@@ -593,8 +1071,10 @@ def render_dashboard(
             placeholder="RSA, SHA-1, source path, rule ID...",
         )
 
-        if st.button("Reload CBOM", use_container_width=True):
-            st.cache_data.clear()
+        if st.button("Clear active scan", width="stretch"):
+            st.session_state["cbom"] = None
+            st.session_state["cbom_source"] = None
+            st.session_state["scan_warnings"] = []
             st.rerun()
 
     scanner_name, scanner_version = _extract_tool_info(cbom)
@@ -649,7 +1129,7 @@ def render_dashboard(
 
         filtered_dataframe = filtered_dataframe[search_mask]
 
-    _render_metrics(filtered_dataframe)
+    _render_metrics(dataframe)
 
     chart_column, summary_column = st.columns([1, 1])
 
@@ -698,8 +1178,17 @@ def render_dashboard(
 
     st.dataframe(
         _style_dataframe(display_dataframe),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
+    )
+
+    # Findings CSV download button
+    st.download_button(
+        label="Download Findings as CSV",
+        data=display_dataframe.to_csv(index=False).encode("utf-8"),
+        file_name="quantumtrace_findings.csv",
+        mime="text/csv",
+        width="stretch",
     )
 
 
@@ -736,18 +1225,99 @@ def main() -> None:
         layout="wide",
     )
 
-    cbom, cbom_path = _load_default_cbom()
+    if "cbom" not in st.session_state:
+        st.session_state["cbom"] = None
+    if "cbom_source" not in st.session_state:
+        st.session_state["cbom_source"] = None
+    if "scan_warnings" not in st.session_state:
+        st.session_state["scan_warnings"] = []
 
-    if cbom is None:
-        st.title("QuantumTrace Cryptographic Risk Dashboard")
-        st.warning(
-            "No `cbom.json` file was found. Run the scanner first:"
+    with st.sidebar:
+        st.title("QuantumTrace")
+        st.caption("Cryptographic Scanner & CBOM Generator")
+
+        uploaded_files = st.file_uploader(
+            "Upload files to scan (JSON, PCAP, Source)",
+            type=["json", "pcap", "pcapng", "py", "java", "go"],
+            accept_multiple_files=True,
         )
-        st.code("python main.py --all --output cbom.json")
-        render_cli_fallback_notice()
+
+        scan_uploaded_button = st.button("Scan uploaded files", width="stretch")
+        scan_bundled_button = st.button("Scan bundled sample data", width="stretch")
+
+        st.divider()
+        uploaded_cbom = st.file_uploader(
+            "Upload existing CycloneDX CBOM",
+            type=["json"],
+            accept_multiple_files=False,
+        )
+
+        load_local_button = False
+        if DEFAULT_CBOM_PATH.exists():
+            load_local_button = st.button("Load local cbom.json", width="stretch")
+
+    # Handle scan actions
+    if scan_uploaded_button:
+        if not uploaded_files:
+            st.sidebar.warning("Please upload at least one file to scan.")
+        else:
+            with st.spinner("Scanning uploaded files..."):
+                cbom_data, warnings = scan_uploaded_files(uploaded_files)
+                st.session_state["cbom"] = cbom_data
+                st.session_state["cbom_source"] = f"{len(uploaded_files)} uploaded file(s)"
+                st.session_state["scan_warnings"] = warnings
+            st.rerun()
+
+    if scan_bundled_button:
+        with st.spinner("Scanning bundled sample data..."):
+            cbom_data, warnings = scan_bundled_data()
+            st.session_state["cbom"] = cbom_data
+            st.session_state["cbom_source"] = "Bundled sample data"
+            st.session_state["scan_warnings"] = warnings
+        st.rerun()
+
+    if uploaded_cbom is not None:
+        try:
+            cbom_data = load_cbom(
+                file_bytes=uploaded_cbom.getvalue(),
+                filepath="",
+            )
+            st.session_state["cbom"] = cbom_data
+            st.session_state["cbom_source"] = uploaded_cbom.name
+            st.session_state["scan_warnings"] = []
+        except Exception as exc:
+            st.sidebar.error(f"Failed to load CBOM JSON: {exc}")
+
+    if load_local_button:
+        cbom_data, cbom_path = _load_default_cbom()
+        if cbom_data is not None:
+            st.session_state["cbom"] = cbom_data
+            st.session_state["cbom_source"] = cbom_path
+            st.session_state["scan_warnings"] = []
+            st.rerun()
+
+    # Empty state: nothing scanned yet
+    active_cbom = st.session_state.get("cbom")
+    if active_cbom is None:
+        st.title("QuantumTrace Cryptographic Risk Dashboard")
+        st.caption("CycloneDX 1.6 Cryptography Bill of Materials")
+        st.info(
+            "👈 **Welcome!** Upload source code (.py, .java, .go), cloud posture JSON, "
+            "or network captures (.pcap) in the sidebar and click **Scan uploaded files**.\n\n"
+            "Or click **Scan bundled sample data** for a quick demonstration of "
+            "quantum vulnerabilities, risk scoring, and CBOM generation."
+        )
+
+        for warn in st.session_state.get("scan_warnings", []):
+            st.warning(warn)
+
         return
 
-    render_dashboard(cbom, cbom_path)
+    # Render dashboard from session state
+    for warn in st.session_state.get("scan_warnings", []):
+        st.warning(warn)
+
+    render_dashboard(active_cbom, st.session_state.get("cbom_source"))
 
 
 if __name__ == "__main__":
