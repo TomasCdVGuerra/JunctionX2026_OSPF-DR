@@ -196,3 +196,144 @@ def test_unicode_and_special_characters():
     assert "migração PQC" in json_str
     parsed = json.loads(json_str)
     assert parsed["components"][0]["description"] == "Operação criptográfica com acentuação e cedilha: migração PQC"
+
+
+# --- Petty CBOM Tests ---
+
+def test_cbom_pydantic_crypto_finding_serialization_and_schema_validation(cyclonedx_schema):
+    """Petty: Verify actual Pydantic CryptoFinding objects across all risk levels validate against CycloneDX 1.6 schema."""
+    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+
+    findings = [
+        CryptoFinding(
+            algorithm_name="RSA-2048",
+            asset_type=AssetType.KEY,
+            source_type="cloud-posture",
+            key_size=2048,
+            crypto_function=CryptoFunction.KEYGEN,
+            quantum_risk=QuantumRiskLevel.CRITICAL,
+            observation="configured",
+            evidence=[Evidence(file_path="cloud/kms.json", rule_id="AWS-KMS-01", line_number=10)],
+        ),
+        CryptoFinding(
+            algorithm_name="AES-128-GCM",
+            asset_type=AssetType.ALGORITHM,
+            source_type="source-code",
+            key_size=128,
+            mode="GCM",
+            crypto_function=CryptoFunction.ENCRYPT,
+            quantum_risk=QuantumRiskLevel.MEDIUM,
+            observation="observed",
+            evidence=[Evidence(file_path="src/cipher.go", rule_id="GO-AES-128", line_number=42)],
+        ),
+        CryptoFinding(
+            algorithm_name="HMAC-SHA256",
+            asset_type=AssetType.ALGORITHM,
+            source_type="source-code",
+            crypto_function=CryptoFunction.MAC,
+            quantum_risk=QuantumRiskLevel.SAFE,
+            observation="observed",
+            evidence=[Evidence(file_path="src/auth.go", rule_id="GO-HMAC", line_number=100)],
+        ),
+    ]
+
+    serializer = CBOMSerializer()
+    for f in findings:
+        serializer.add_finding(f)
+
+    # Must strictly validate against official CycloneDX 1.6 schema
+    jsonschema.validate(instance=serializer.document, schema=cyclonedx_schema)
+
+    # Check component values
+    assert len(serializer.document["components"]) == 3
+    c0 = serializer.document["components"][0]
+    p0 = {p["name"]: p["value"] for p in c0["properties"]}
+    assert p0["cryptotrace:sourcePath"] == "cloud/kms.json"
+    assert p0["cryptotrace:riskRating"] == "critical"
+    assert p0["cryptotrace:quantumVulnerable"] == "true"
+
+
+def test_cbom_evidence_array_source_path_extraction():
+    """Petty: Verify source_path is strictly extracted from finding.evidence[0].file_path."""
+    from scanner.models import AssetType, CryptoFinding, Evidence, QuantumRiskLevel
+
+    ev1 = Evidence(file_path="first/path.go", rule_id="R1", line_number=1)
+    ev2 = Evidence(file_path="second/path.go", rule_id="R2", line_number=2)
+    finding = CryptoFinding(
+        algorithm_name="Ed25519",
+        source_type="source-code",
+        observation="observed",
+        quantum_risk=QuantumRiskLevel.CRITICAL,
+        evidence=[ev1, ev2],
+    )
+
+    serializer = CBOMSerializer()
+    serializer.add_finding(finding)
+
+    comp = serializer.document["components"][0]
+    props = {p["name"]: p["value"] for p in comp["properties"]}
+    assert props["cryptotrace:sourcePath"] == "first/path.go"
+
+
+def test_cbom_empty_evidence_array_graceful_degradation():
+    """Petty: Verify finding with empty evidence list gracefully degrades to 'unknown' without raising IndexError."""
+    serializer = CBOMSerializer()
+    serializer.add_finding({
+        "canonical_algorithm": "SHA-256",
+        "evidence": [],
+    })
+
+    comp = serializer.document["components"][0]
+    props = {p["name"]: p["value"] for p in comp["properties"]}
+    assert props["cryptotrace:sourcePath"] == "unknown"
+
+
+def test_cbom_bom_ref_sensitivity_to_operation_and_source_type():
+    """Petty: Verify bom-ref hash differentiates findings differing only by operation or source_type."""
+    s = CBOMSerializer()
+    base = {"canonical_algorithm": "RSA-2048", "source_path": "main.py"}
+
+    f1 = {**base, "source_type": "source-code", "operation": "SIGN"}
+    f2 = {**base, "source_type": "source-code", "operation": "VERIFY"}
+    f3 = {**base, "source_type": "cloud-posture", "operation": "SIGN"}
+
+    s.add_finding(f1)
+    s.add_finding(f2)
+    s.add_finding(f3)
+
+    refs = [c["bom-ref"] for c in s.document["components"]]
+    assert len(refs) == 3
+    assert len(set(refs)) == 3, "bom-ref hashes must be unique across differing operations or source_types!"
+
+
+def test_cbom_arbitrary_object_missing_attributes_graceful():
+    """Petty: Verify serializer handles an empty/arbitrary object with zero expected attributes without crashing."""
+    class EmptyObj:
+        pass
+
+    serializer = CBOMSerializer()
+    serializer.add_finding(EmptyObj())
+
+    assert len(serializer.document["components"]) == 1
+    comp = serializer.document["components"][0]
+    assert comp["name"] == "unknown"
+    props = {p["name"]: p["value"] for p in comp["properties"]}
+    assert props["cryptotrace:riskRating"] == "unknown"
+    assert props["cryptotrace:sourcePath"] == "unknown"
+
+
+def test_cbom_boolean_properties_stringified_strictly_lowercase():
+    """Petty: CycloneDX properties are strings; booleans must be strictly lowercase 'true' or 'false' (never 'True'/'False')."""
+    serializer = CBOMSerializer()
+    serializer.add_finding({
+        "canonical_algorithm": "AES-256",
+        "quantum_vulnerable": False,
+        "quantum_safe": True,
+    })
+
+    comp = serializer.document["components"][0]
+    props = {p["name"]: p["value"] for p in comp["properties"]}
+    assert props["cryptotrace:quantumVulnerable"] == "false"
+    assert props["cryptotrace:quantumSafe"] == "true"
+    assert props["cryptotrace:quantumVulnerable"] != "False"
+    assert props["cryptotrace:quantumSafe"] != "True"
