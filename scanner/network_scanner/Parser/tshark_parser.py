@@ -14,7 +14,7 @@ import subprocess
 from typing import Any
 
 from scanner.models import CryptoFinding
-from scanner.network_scanner.parser.model_adapter import findings_from_metadata
+from scanner.network_scanner.model_adapter import findings_from_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def extract_ssh_metadata(pcap_filepath: str) -> list[dict[str, Any]]:
 
 
 def detect_cleartext_traffic(pcap_filepath: str) -> list[dict[str, Any]]:
-    """Report decoded plaintext messages, excluding TLS upgrade preambles.
+    """Report decoded plaintext messages, excluding TLS and upgrade preambles.
 
     PostgreSQL SSL requests/responses and SMTP EHLO/STARTTLS do not prove
     unencrypted application traffic, so they are excluded.
@@ -206,14 +206,20 @@ def detect_cleartext_traffic(pcap_filepath: str) -> list[dict[str, Any]]:
         "http.request.method", "http.host", "http.response.code",
         "ftp.request.command", "ftp.response.code", "telnet", "ldap.protocolOp",
         "pgsql.type", "smtp.req.command", "tcp.payload",
+        "tls.record.version", "frame.protocols",
     ]
     packets = _run_tshark_json(
         str(pcap_filepath),
-        "http.request or http.response or ftp or telnet or ldap or pgsql or smtp.req.command", fields,
+        "(http.request or http.response or ftp or telnet or ldap or pgsql or smtp.req.command) and not tls", fields,
     )
     entries = []
     for packet in packets:
         layers = packet.get("_source", {}).get("layers", {})
+        # Decoding application fields does not prove plaintext transport.
+        protocols = {name for value in _get_field_list(layers, "frame.protocols")
+                     for name in value.split(":")}
+        if _get_field_list(layers, "tls.record.version") or "tls" in protocols:
+            continue
         method = _get_field_first(layers, ["http.request.method"])
         http_status = _get_field_first(layers, ["http.response.code"])
         ftp_command = _get_field_first(layers, ["ftp.request.command"])

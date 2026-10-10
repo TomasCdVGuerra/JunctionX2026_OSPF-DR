@@ -159,18 +159,18 @@ def test_empty_tshark_result_has_no_cleartext_findings(monkeypatch):
     assert parser.detect_cleartext_traffic("capture.pcap") == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known parser defect: decoded HTTP inside TLS is treated as plaintext. "
-    "The current extraction filter also permits TLS frames and omits transport TLS metadata."
-))
+@pytest.mark.parametrize("tls_fields", [
+    {"tls.record.version": ["0x0303"]},
+    {"frame.protocols": ["eth:ip:tcp:tls:http"]},
+    {"tls.record.version": ["0x0303"], "frame.protocols": ["eth:ip:tcp:tls:http"]},
+], ids=["record-version", "protocol-stack", "both"])
 @pytest.mark.parametrize("http_fields", [
     {"http.request.method": ["GET"]}, {"http.response.code": ["200"]},
 ], ids=["tls-http-request", "tls-http-response"])
-def test_decoded_http_inside_tls_is_not_reported_as_cleartext(monkeypatch, http_fields):
+def test_decoded_http_inside_tls_is_not_reported_as_cleartext(monkeypatch, http_fields, tls_fields):
+    """Exclui pedidos e respostas HTTP dentro de TLS usando cada evidencia de transporte disponivel."""
     # TShark can decode encrypted application messages using a configured
     # key log or PCAPNG Decryption Secrets Block. Decoding is not evidence
     # that the original transport was plaintext.
-    """Documenta a falha conhecida em que HTTP descodificado dentro de TLS e classificado como trafego em claro."""
-    fields = {**http_fields, "tls.record.version": ["0x0303"],
-              "frame.protocols": ["eth:ip:tcp:tls:http"]}
+    fields = {**http_fields, **tls_fields}
     assert extract(monkeypatch, fields, destination_port="443") == []

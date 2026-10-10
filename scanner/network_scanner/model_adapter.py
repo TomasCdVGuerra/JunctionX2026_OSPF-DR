@@ -49,12 +49,18 @@ def _finding(path: Path, entry: dict, primitive: Primitive, observation: Observa
     details = {key: entry[key] for key in _CONTEXT_FIELDS if entry.get(key) is not None}
     details.update(context or {})
     raw_packet = entry.get("packet_number")
-    try:
-        packet = int(raw_packet) if raw_packet is not None and not isinstance(raw_packet, bool) else None
-    except (ValueError, TypeError):
-        packet = None
+    packet = None
+    if isinstance(raw_packet, int) and not isinstance(raw_packet, bool):
+        packet = raw_packet
+    elif isinstance(raw_packet, str):
+        normalized = raw_packet.strip()
+        if re.fullmatch(r"[0-9]+", normalized):
+            packet = int(normalized)
     if packet is not None and packet < 1:
         packet = None
+    details.pop("packet_number", None)
+    if packet is not None:
+        details["packet_number"] = packet
     evidence = Evidence(
         file_path=str(path), packet_number=packet, rule_id=rule_id,
         matched_snippet=json.dumps(details, ensure_ascii=False, sort_keys=True),

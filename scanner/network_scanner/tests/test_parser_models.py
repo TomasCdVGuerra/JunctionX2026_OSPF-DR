@@ -331,13 +331,22 @@ def test_conversion_does_not_mutate_raw_metadata_lists(parsed_metadata, tmp_path
 
 
 @pytest.mark.parametrize("packet,expected", [(None, None), (True, None), (False, None),
-                                            ("invalid", None), (0, None), (-2, None), ("73", 73)])
+                                            ("invalid", None), (0, None), (-2, None), ("73", 73),
+                                            (1.9, None), (1.0, None), ("1.9", None),
+                                            ("1_000", None), (73, 73), (" 73 ", 73)])
 def test_evidence_never_invents_a_positive_packet_number(parsed_metadata, tmp_path, packet, expected):
     """Valida numeros de pacote e preserva a ausencia de um numero valido sem inventar evidencia."""
     parsed_metadata(tls=[_tls(packet_number=packet, cipher_suites=["0x1301"])])
     findings = parser.scan(tmp_path / "packet-number.pcap")
     assert findings
     assert all(e.packet_number == expected for finding in findings for e in finding.evidence)
+    for finding in findings:
+        for evidence in finding.evidence:
+            context = json.loads(evidence.matched_snippet)
+            if expected is None:
+                assert "packet_number" not in context
+            else:
+                assert context["packet_number"] == expected
     assert all(CryptoFinding.model_validate(finding.to_dict()) == finding for finding in findings)
 
 
