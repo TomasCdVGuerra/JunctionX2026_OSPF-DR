@@ -1,4 +1,22 @@
-"""Centralized post-quantum and classical risk evaluation engine."""
+"""Centralized post-quantum and classical risk evaluation engine.
+
+Dual-Axis Risk Model:
+- quantum_risk: Future quantum vulnerability (e.g. exposure to Shor's algorithm for
+  factoring/discrete logarithms, or Grover's algorithm for symmetric search).
+- classical_risk: Current classical cryptographic strength (e.g. exposure to known
+  classical cryptanalysis, collision attacks, or weak key sizes under pre-quantum threat models).
+
+Distinction Example:
+- RSA-2048:
+    * quantum_risk = CRITICAL (vulnerable to Shor's algorithm; must be migrated to PQC)
+    * classical_risk = SAFE (provides ~112 bits of classical security; not classically broken today)
+- RSA-1024:
+    * quantum_risk = CRITICAL (vulnerable to Shor's algorithm)
+    * classical_risk = MEDIUM (classically deprecated/weak parameter size)
+- MD5 / SHA-1 / DES:
+    * quantum_risk = CRITICAL
+    * classical_risk = CRITICAL (classically broken via known practical attacks)
+"""
 
 from __future__ import annotations
 
@@ -589,7 +607,15 @@ def build_reasoning(
 
 
 def enrich_finding_risk(finding: CryptoFinding) -> CryptoFinding:
-    """Enrich a CryptoFinding instance with centralized quantum and classical risk evaluations."""
+    """Enrich a CryptoFinding instance with centralized quantum and classical risk evaluations.
+
+    Risk Dimensions:
+    - quantum_risk: Future quantum vulnerability (e.g. Shor's algorithm breaking RSA/ECC
+      key exchange/signatures -> CRITICAL; Grover's algorithm halving symmetric bits -> MEDIUM/SAFE).
+    - classical_risk: Current pre-quantum cryptographic strength (e.g. broken ciphers like
+      MD5/DES/SHA-1 -> CRITICAL, deprecated key sizes like RSA-1024 -> MEDIUM, modern
+      primitives like RSA-2048/AES-GCM -> SAFE).
+    """
     algo = finding.algorithm_name
     key_size = finding.key_size
     mode = finding.mode
@@ -600,7 +626,13 @@ def enrich_finding_risk(finding: CryptoFinding) -> CryptoFinding:
         mode=mode,
     )
 
-    # Derive classical risk
+    # Derive classical risk (pre-quantum cryptographic strength):
+    # - Classically broken primitives (MD5, SHA-1, DES, 3DES, ECB mode) -> CRITICAL.
+    # - Shor-vulnerable asymmetric primitives (RSA, ECC, Diffie-Hellman):
+    #   * Quantum exposure is CRITICAL (must migrate to PQC).
+    #   * Classical risk is SAFE for modern parameters (e.g. RSA-2048, ECC P-256),
+    #     or MEDIUM for deprecated key lengths (e.g. RSA <= 1024).
+    # - Symmetric / PQC primitives with adequate key lengths -> SAFE.
     if is_classically_broken(algo, mode):
         classical_risk = QuantumRiskLevel.CRITICAL
     elif quantum_risk == QuantumRiskLevel.CRITICAL:
