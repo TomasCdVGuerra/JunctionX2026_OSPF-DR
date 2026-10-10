@@ -64,11 +64,11 @@ GO_RULES: list[SourcePatternRule] = [
     SourcePatternRule(
         rule_id="go-aes-cipher",
         pattern=re.compile(r"\baes\.NewCipher\b"),
-        algorithm_name="AES-256-GCM",
-        default_key_size="256",
-        risk_reasoning="AES encryption analyzed for key size and mode security.",
+        algorithm_name="AES",
+        default_key_size=None,
+        risk_reasoning="AES encryption detected; key size and cipher mode require context resolution.",
         nist_standard="FIPS 197",
-        risk_level=QuantumRiskLevel.SAFE,
+        risk_level=QuantumRiskLevel.UNKNOWN,
         asset_type=AssetType.ALGORITHM,
     ),
     SourcePatternRule(
@@ -196,15 +196,18 @@ def detect_custom_kdf(
     """Recognize hand-written PBKDF2 loops using HMAC-SHA256 (e.g., auth-gateway)."""
     findings: list[CryptoFinding] = []
 
-    # Check for hand-written PBKDF2 pattern:
+    cleaned_lines = _strip_comments_and_strings(source_text.splitlines())
+    cleaned_text = "\n".join(cleaned_lines)
+
+    # Check for hand-written PBKDF2 pattern in sanitized code:
     # 1. deriveKey function or KDF loop
     # 2. hmac.New(sha256.New, ...)
     # 3. for ... iter loop with XORing (^=)
     is_pbkdf2_loop = (
-        ("deriveKey" in source_text or "pbkdf2" in source_text.lower())
-        and "hmac.New" in source_text
-        and "sha256" in source_text
-        and "^=" in source_text
+        ("deriveKey" in cleaned_text or "pbkdf2" in cleaned_text.lower())
+        and "hmac.New" in cleaned_text
+        and "sha256" in cleaned_text
+        and "^=" in cleaned_text
     )
 
     if not is_pbkdf2_loop:
@@ -215,18 +218,17 @@ def detect_custom_kdf(
     except ValueError:
         rel_path = filepath.as_posix()
 
-    lines = source_text.splitlines()
     target_line = 1
     target_snippet = "func deriveKey"
 
-    for idx, line in enumerate(lines, start=1):
-        if "func deriveKey" in line or "deriveKey(" in line:
+    for idx, (raw_l, clean_l) in enumerate(zip(source_text.splitlines(), cleaned_lines), start=1):
+        if "func deriveKey" in clean_l or "deriveKey(" in clean_l:
             target_line = idx
-            target_snippet = line.strip()
+            target_snippet = raw_l.strip()
             break
 
     # Determine key length if iterations/keyLen const is present
-    key_len_val = resolve_go_constant(source_text, "keyLen")
+    key_len_val = resolve_go_constant(cleaned_text, "keyLen")
     key_size = 256
     if key_len_val.isdigit():
         bits = infer_key_size_from_literal(key_len_val)
@@ -260,46 +262,45 @@ def detect_custom_kdf(
 
 def _resolve_aes_key_and_mode(
     source_text: str,
-) -> tuple[int, str]:
-    """Resolve key size in bits and cipher mode for AES in a Go file."""
-    # 1. Resolve key size
-    key_size = 256  # default
-    found_size = False
+) -> tuple[int | None, str]:
+    """Resolve key size in bits and cipher mode for AES in a Go file without guessing."""
+    cleaned_lines = _strip_comments_and_strings(source_text.splitlines())
+    cleaned_text = "\n".join(cleaned_lines)
 
-    # Check var/const definitions for keys (e.g. exportKey, aesKey, keyLen)
-    for m in re.finditer(r"\b(?:var|const)\s+([a-zA-Z0-9_]*[kK]ey[a-zA-Z0-9_]*)\b", source_text):
+    # 1. Resolve key size (defaults to None, never guesses 256)
+    key_size: int | None = None
+
+    # Check var/const definitions for keys (e.g. exportKey, aesKey, keyLen) in sanitized code
+    for m in re.finditer(r"\b(?:var|const)\s+([a-zA-Z0-9_]*[kK]ey[a-zA-Z0-9_]*)\b", cleaned_text):
         var_name = m.group(1)
-        resolved = resolve_go_constant(source_text, var_name)
+        resolved = resolve_go_constant(cleaned_text, var_name)
         bits = infer_key_size_from_literal(resolved)
         if bits.isdigit():
             key_size = int(bits)
-            found_size = True
             break
 
-    # If not found yet, check make([]byte, keyLen) or make([]byte, 16/32)
-    if not found_size:
-        for m_make in re.finditer(r"\bmake\s*\(\s*\[\]byte\s*,\s*([a-zA-Z0-9_]+)\)", source_text):
+    # If not found yet, check make([]byte, keyLen) or make([]byte, 16/32) in sanitized code
+    if key_size is None:
+        for m_make in re.finditer(r"\bmake\s*\(\s*\[\]byte\s*,\s*([a-zA-Z0-9_]+)\)", cleaned_text):
             param = m_make.group(1)
             if param.isdigit() and int(param) in (16, 24, 32):
                 key_size = int(param) * 8
-                found_size = True
                 break
-            resolved = resolve_go_constant(source_text, param)
+            resolved = resolve_go_constant(cleaned_text, param)
             bits = infer_key_size_from_literal(resolved)
             if bits.isdigit():
                 key_size = int(bits)
-                found_size = True
                 break
 
-    # 2. Resolve mode: Detect ECB mode if present; otherwise default or infer GCM
+    # 2. Resolve mode from sanitized code: Detect ECB mode if present; otherwise default or infer GCM
     mode = "GCM"
-    if "block.Encrypt" in source_text and "cipher.NewGCM" not in source_text and "cipher.NewCBC" not in source_text:
+    if "block.Encrypt" in cleaned_text and "cipher.NewGCM" not in cleaned_text and "cipher.NewCBC" not in cleaned_text:
         mode = "ECB"
-    elif "cipher.NewCBC" in source_text:
+    elif "cipher.NewCBC" in cleaned_text:
         mode = "CBC"
-    elif "cipher.NewCTR" in source_text:
+    elif "cipher.NewCTR" in cleaned_text:
         mode = "CTR"
-    elif "cipher.NewGCM" in source_text:
+    elif "cipher.NewGCM" in cleaned_text:
         mode = "GCM"
 
     return key_size, mode
@@ -576,15 +577,26 @@ def scan_go_file(
             if mode == "ECB":
                 quantum_risk = QuantumRiskLevel.CRITICAL
                 risk_reasoning = "AES in ECB mode lacks semantic security and is classically broken; pattern leakage occurs."
+                algo_name = f"AES-{key_size}-ECB" if key_size else "AES-ECB"
             elif key_size == 128:
                 quantum_risk = QuantumRiskLevel.MEDIUM
                 risk_reasoning = "AES-128 is weakened by Grover's algorithm to 64-bit security."
-            else:
+                algo_name = f"AES-128-{mode}"
+            elif key_size == 256 and mode == "GCM":
                 quantum_risk = QuantumRiskLevel.SAFE
-                risk_reasoning = "AES-256 provides 128-bit quantum security against Grover's algorithm."
+                risk_reasoning = "AES-256-GCM provides 128-bit quantum security against Grover's algorithm."
+                algo_name = "AES-256-GCM"
+            elif key_size == 256:
+                quantum_risk = QuantumRiskLevel.SAFE
+                risk_reasoning = f"AES-256 in {mode} mode provides 128-bit quantum security against Grover's algorithm."
+                algo_name = f"AES-256-{mode}"
+            else:
+                quantum_risk = QuantumRiskLevel.UNKNOWN
+                risk_reasoning = f"AES in {mode} mode with unresolved key size; speculative key sizes are avoided."
+                algo_name = f"AES-{mode}" if mode else "AES"
 
             findings.append(CryptoFinding(
-                algorithm_name=f"AES-{key_size}-{mode}",
+                algorithm_name=algo_name,
                 asset_type=AssetType.ALGORITHM,
                 source_type="source-code",
                 key_size=key_size,
@@ -773,7 +785,7 @@ def scan(path: Path) -> list[CryptoFinding]:
     """Protocol-compliant scan method for directories or Go files."""
     path = Path(path)
     if path.is_file():
-        return scan_go_file(path)
+        return scan_go_file(path, base_dir=path.parent)
     if path.is_dir():
         findings: list[CryptoFinding] = []
         for p in sorted(path.rglob("*.go")):

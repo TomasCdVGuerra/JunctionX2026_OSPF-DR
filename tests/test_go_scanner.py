@@ -704,3 +704,104 @@ def test_corrupted_encoding_file_resilience(tmp_path):
     assert len(findings) == 1
     assert findings[0].algorithm_name == "MD5"
 
+
+# --- 9. Regression Tests for Reviewer Findings ---
+
+def test_pbkdf2_in_comments_does_not_produce_findings(tmp_path):
+    """Regression: PBKDF2 pattern solely inside block or line comments must not produce a finding."""
+    code = """package main
+/*
+func deriveKey(password, salt []byte) []byte {
+    mac := hmac.New(sha256.New, password)
+    result ^= value
+}
+*/
+// func pbkdf2() { hmac.New(sha256.New, nil); val ^= 1 }
+func main() {}
+"""
+    f = tmp_path / "commented_kdf.go"
+    f.write_text(code, encoding="utf-8")
+    findings = scan_go_file(f)
+    assert len(findings) == 0
+
+
+def test_aes_mode_markers_in_comments_do_not_influence_mode(tmp_path):
+    """Regression: block.Encrypt or cipher.NewCBC in comments must not change actual cipher mode."""
+    code = """package main
+import (
+    "crypto/aes"
+    "crypto/cipher"
+)
+
+// Legacy implementation used block.Encrypt and ECB mode:
+// block.Encrypt(dst, src)
+// cipher.NewCBC(block, iv)
+
+const keyLen = 32
+
+func main() {
+    k := make([]byte, keyLen)
+    block, _ := aes.NewCipher(k)
+    gcm, _ := cipher.NewGCM(block)
+    _ = gcm
+}
+"""
+    f = tmp_path / "commented_mode.go"
+    f.write_text(code, encoding="utf-8")
+    findings = scan_go_file(f)
+    assert len(findings) == 1
+    assert findings[0].algorithm_name == "AES-256-GCM"
+    assert findings[0].mode == "GCM"
+    assert findings[0].quantum_risk == QuantumRiskLevel.SAFE
+
+
+def test_unknown_aes_key_size_is_not_guessed_as_256(tmp_path):
+    """Regression: When AES key size cannot be resolved, scanner reports AES with UNKNOWN risk and key_size=None."""
+    code = """package main
+import (
+    "crypto/aes"
+    "crypto/cipher"
+)
+
+func run(opaqueKey []byte) {
+    block, _ := aes.NewCipher(opaqueKey)
+    gcm, _ := cipher.NewGCM(block)
+    _ = gcm
+}
+"""
+    f = tmp_path / "unknown_key.go"
+    f.write_text(code, encoding="utf-8")
+    findings = scan_go_file(f)
+    assert len(findings) == 1
+    assert findings[0].algorithm_name == "AES-GCM"
+    assert findings[0].key_size is None
+    assert findings[0].quantum_risk == QuantumRiskLevel.UNKNOWN
+
+
+def test_scan_single_file_produces_relative_evidence_path(tmp_path):
+    """Regression: scan() called with an absolute file path must produce relative evidence path."""
+    code = """package main
+import "crypto/md5"
+func main() { md5.New() }
+"""
+    f = (tmp_path / "standalone.go").resolve()
+    f.write_text(code, encoding="utf-8")
+    findings = scan(f)
+    assert len(findings) == 1
+    assert findings[0].evidence[0].file_path == "standalone.go"
+
+
+def test_generic_go_rules_aes_does_not_claim_256_gcm():
+    """Regression: GO_RULES catalogue defines AES conservatively without guessing 256-bit or GCM."""
+    aes_rule = next(r for r in GO_RULES if r.rule_id == "go-aes-cipher")
+    assert aes_rule.algorithm_name == "AES"
+    assert aes_rule.default_key_size is None
+    assert aes_rule.risk_level == QuantumRiskLevel.UNKNOWN
+
+
+def test_arbitrary_strings_do_not_become_guessed_key_sizes():
+    """Regression: Arbitrary non-key strings (e.g. password, token) return 'unknown'."""
+    assert infer_key_size_from_literal("password") == "unknown"
+    assert infer_key_size_from_literal('"config_label"') == "unknown"
+    assert infer_key_size_from_literal("'temporary_token'") == "unknown"
+

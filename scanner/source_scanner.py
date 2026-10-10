@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from scanner.models import CryptoFinding
 
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "scan_file",
@@ -35,8 +37,9 @@ def scan_file(
             import scanner.python_scanner as py_mod
             if hasattr(py_mod, "scan_python_file"):
                 return py_mod.scan_python_file(file_path, base_dir=base_dir)
-        except ImportError:
-            pass
+            logger.warning("Python scanner unavailable; file was not analyzed: %s", file_path)
+        except Exception as exc:
+            logger.warning("Python scanner failed on %s: %s", file_path, exc)
         return []
 
     if suffix == ".java":
@@ -44,8 +47,9 @@ def scan_file(
             import scanner.java_scanner as java_mod
             if hasattr(java_mod, "scan_java_file"):
                 return java_mod.scan_java_file(file_path, base_dir=base_dir)
-        except ImportError:
-            pass
+            logger.warning("Java scanner unavailable; file was not analyzed: %s", file_path)
+        except Exception as exc:
+            logger.warning("Java scanner failed on %s: %s", file_path, exc)
         return []
 
     return []

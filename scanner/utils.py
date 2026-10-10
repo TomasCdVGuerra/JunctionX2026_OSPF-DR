@@ -127,12 +127,8 @@ def infer_key_size_from_literal(literal_value: str) -> str:
         byte_len = len(cleaned) // 2
         return str(byte_len * 8)
 
-    # 3. String literal length in bytes: 16 chars -> 128 bits, 32 chars -> 256 bits
+    # 3. Known key material string literal length: 16 chars -> 128 bits, 24 chars -> 192 bits, 32 chars -> 256 bits
     if len(cleaned) in (16, 24, 32):
-        return str(len(cleaned) * 8)
-
-    # Other non-numeric string length
-    if len(cleaned) > 0 and not cleaned.isdigit():
         return str(len(cleaned) * 8)
 
     return "unknown"

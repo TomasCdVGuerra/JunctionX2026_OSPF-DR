@@ -216,10 +216,10 @@ def test_infer_key_size_from_literal_petty_cases():
     # 32-character non-hex string (e.g. includes letters g-z) -> 32 bytes -> 256 bits
     assert infer_key_size_from_literal('"' + 'g' * 32 + '"') == "256"
 
-    # String literal length in bits (5 chars = 40 bits, 10 non-numeric chars = 80 bits)
-    assert infer_key_size_from_literal('"short"') == "40"
-    assert infer_key_size_from_literal('"abcdefghij"') == "80"
-    # Pure numeric strings not matching standard sizes return unknown
+    # Arbitrary strings (not 16, 24, or 32 bytes) must return unknown instead of speculative guesses
+    assert infer_key_size_from_literal('"short"') == "unknown"
+    assert infer_key_size_from_literal('"abcdefghij"') == "unknown"
+    assert infer_key_size_from_literal('"password"') == "unknown"
     assert infer_key_size_from_literal('"1234567890"') == "unknown"
 
     # Empty or unquoted literals
@@ -253,3 +253,19 @@ def test_source_pattern_rule_dataclass_contract():
     assert rule.default_key_size is None
     assert rule.risk_level == QuantumRiskLevel.SAFE
     assert rule.asset_type == AssetType.ALGORITHM
+
+
+def test_python_and_java_scanner_unavailable_logs_warning(tmp_path: Path, caplog):
+    """Regression: Unavailable python/java scanners log warnings visibly instead of silently failing."""
+    import logging
+    with caplog.at_level(logging.WARNING):
+        py_file = tmp_path / "script.py"
+        py_file.write_text("import hashlib\n")
+        scan_file(py_file)
+        assert any("Python scanner unavailable" in record.message for record in caplog.records)
+
+    with caplog.at_level(logging.WARNING):
+        java_file = tmp_path / "App.java"
+        java_file.write_text("class App {}\n")
+        scan_file(java_file)
+        assert any("Java scanner unavailable" in record.message for record in caplog.records)
