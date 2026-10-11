@@ -388,7 +388,7 @@ def test_enrichment_preserves_original_and_records_both_assessments(rsa_finding)
     assert assessment.file_path == "kms.json"
     assert assessment.json_path == "$.Keys[0]"
     assert assessment.matched_snippet is None
-    assert assessment.nist_standard is None
+    assert assessment.nist_standard == "SP 800-131A Rev. 2"
     assert "Risco quântico (critical):" in assessment.risk_reasoning
     assert "Risco clássico (safe):" in assessment.risk_reasoning
     assert "Shor" in assessment.risk_reasoning
@@ -516,3 +516,221 @@ def test_real_cloud_inventory_can_be_enriched_without_changing_discovery():
         assert len(result.evidence) == len(original.evidence) + 1
         assert result.key_size == original.key_size
         assert result.algorithm_name == original.algorithm_name
+
+
+@pytest.mark.parametrize(
+    "algorithm,expected",
+    [
+        ("MD5", QuantumRiskLevel.MEDIUM),
+        ("SHA-1", QuantumRiskLevel.MEDIUM),
+        ("SHA-224", QuantumRiskLevel.MEDIUM),
+        ("sha256", QuantumRiskLevel.MEDIUM),
+        ("SHA-384", QuantumRiskLevel.SAFE),
+        ("SHA-512", QuantumRiskLevel.SAFE),
+    ],
+)
+@pytest.mark.parametrize("function", [CryptoFunction.DIGEST, CryptoFunction.SIGN, CryptoFunction.VERIFY])
+def test_quantum_hash_collision_policy(algorithm, expected, function):
+    risk, reasoning = evaluate_quantum_risk(algorithm, crypto_function=function)
+    assert risk == expected
+    assert "BHT" in reasoning
+    assert function.value in reasoning
+    assert "não equivalem ao custo real" in reasoning
+    assert "nem avalia pré-imagens" in reasoning
+
+
+@pytest.mark.parametrize("algorithm", ["MD5", "SHA-1", "SHA-256", "SHA-384", "SHA-512"])
+@pytest.mark.parametrize("function", [CryptoFunction.UNKNOWN, CryptoFunction.MAC, CryptoFunction.KDF])
+def test_quantum_hash_without_collision_context_remains_unknown(algorithm, function):
+    risk, reasoning = evaluate_quantum_risk(algorithm, crypto_function=function)
+    assert risk == QuantumRiskLevel.UNKNOWN
+    assert "contexto suficiente" in reasoning
+    assert "BHT" not in reasoning
+
+
+def test_hash_digest_length_is_not_taken_from_key_size():
+    risk, reasoning = evaluate_quantum_risk(
+        "SHA-256", 4096, crypto_function=CryptoFunction.DIGEST,
+    )
+    assert risk == QuantumRiskLevel.MEDIUM
+    assert "digest de 256 bits" in reasoning
+    assert "4096" not in reasoning
+
+
+def test_weak_hash_classical_failure_is_separate_from_quantum_model():
+    assert evaluate_quantum_risk("SHA-1", crypto_function=CryptoFunction.SIGN)[0] == QuantumRiskLevel.MEDIUM
+    assert evaluate_classical_risk("SHA-1", crypto_function=CryptoFunction.SIGN)[0] == QuantumRiskLevel.CRITICAL
+
+
+@pytest.mark.parametrize("signature", ["SHA256WITHRSA", "ECDSAWITHSHA384"])
+def test_quantum_signature_assesses_hash_but_shor_still_dominates(signature):
+    risk, reasoning = evaluate_quantum_risk(signature)
+    assert risk == QuantumRiskLevel.CRITICAL
+    assert "Shor" in reasoning
+    assert "BHT" in reasoning
+    assert "ainda não" not in reasoning
+
+
+@pytest.mark.parametrize("suite", ["TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"])
+def test_quantum_tls13_hash_transcript_is_assessed_without_inventing_handshake(suite):
+    risk, reasoning = evaluate_quantum_risk(suite)
+    assert risk == QuantumRiskLevel.UNKNOWN
+    assert "BHT" in reasoning
+    assert "transcript TLS 1.3" in reasoning
+    assert "não o HKDF completo" in reasoning
+    assert "Troca de chaves: não identificada" in reasoning
+
+
+def test_legacy_sha1_mac_does_not_receive_collision_rule():
+    risk, reasoning = evaluate_quantum_risk("AES128-SHA")
+    assert risk == QuantumRiskLevel.CRITICAL  # RSA, not the SHA-1 MAC.
+    assert "BHT" not in reasoning
+    assert "SHA-1: função mac" in reasoning
+
+
+def test_enrichment_passes_quantum_hash_context_and_preserves_parameters(rsa_finding):
+    finding = rsa_finding.model_copy(update={
+        "algorithm_name": "SHA-256", "key_size": None,
+        "crypto_function": CryptoFunction.DIGEST,
+    })
+    enriched = enrich_finding(finding)
+    assert enriched.quantum_risk == QuantumRiskLevel.MEDIUM
+    assert enriched.classical_risk == QuantumRiskLevel.SAFE
+    assert enriched.key_size is None
+    assert finding.quantum_risk == QuantumRiskLevel.UNKNOWN
+    assert "BHT" in enriched.evidence[-1].risk_reasoning
+    assert enrich_finding(enriched) == enriched
+
+
+def test_quantum_rejects_invalid_usage_context():
+    with pytest.raises(ValueError):
+        evaluate_quantum_risk("SHA-256", crypto_function="invented")
+
+
+@pytest.mark.parametrize(
+    "algorithm,standard,function",
+    [
+        ("ML-KEM-512", "FIPS 203", CryptoFunction.KEY_EXCHANGE),
+        ("ML-KEM-768", "FIPS 203", CryptoFunction.KEY_EXCHANGE),
+        ("ML-KEM-1024", "FIPS 203", CryptoFunction.KEY_EXCHANGE),
+        ("ML-DSA-44", "FIPS 204", CryptoFunction.SIGN),
+        ("ML-DSA-65", "FIPS 204", CryptoFunction.VERIFY),
+        ("ML-DSA-87", "FIPS 204", CryptoFunction.SIGN),
+        *[(f"SLH-DSA-{digest}-{parameter}", "FIPS 205", CryptoFunction.SIGN)
+          for digest in ("SHA2", "SHAKE")
+          for parameter in ("128s", "128f", "192s", "192f", "256s", "256f")],
+    ],
+)
+def test_standardised_pqc_parameters_are_recognised(algorithm, standard, function):
+    for evaluate in (evaluate_quantum_risk, evaluate_classical_risk):
+        risk, reasoning = evaluate(algorithm, crypto_function=function)
+        assert risk == QuantumRiskLevel.SAFE
+        assert standard in reasoning
+        assert "não certifica" in reasoning
+
+
+@pytest.mark.parametrize("algorithm", ["ML-KEM", "ML-DSA", "SLH-DSA", "ML-KEM-999", "ML-DSA-512", "SLH-DSA-SHA2-999f", "Kyber768", "Dilithium3", "X25519MLKEM768"])
+def test_incomplete_draft_or_unknown_pqc_names_are_not_guessed(algorithm):
+    assert evaluate_quantum_risk(algorithm)[0] == QuantumRiskLevel.UNKNOWN
+    assert evaluate_classical_risk(algorithm)[0] == QuantumRiskLevel.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "algorithm,function",
+    [("ML-KEM-768", CryptoFunction.SIGN),
+     ("ML-KEM-768", CryptoFunction.ENCRYPT),
+     ("ML-DSA-65", CryptoFunction.KEY_EXCHANGE),
+     ("SLH-DSA-SHAKE-128f", CryptoFunction.MAC)],
+)
+def test_pqc_with_incompatible_purpose_remains_unknown(algorithm, function):
+    for evaluate in (evaluate_quantum_risk, evaluate_classical_risk):
+        risk, reasoning = evaluate(algorithm, crypto_function=function)
+        assert risk == QuantumRiskLevel.UNKNOWN
+        assert "incompatível" in reasoning
+
+
+def test_pqc_enrichment_does_not_turn_parameter_name_into_key_size(rsa_finding):
+    finding = rsa_finding.model_copy(update={
+        "algorithm_name": "ml_kem_768", "key_size": None,
+        "crypto_function": CryptoFunction.KEY_EXCHANGE, "recommendation": None,
+    })
+    enriched = enrich_finding(finding)
+    assert enriched.quantum_risk == QuantumRiskLevel.SAFE
+    assert enriched.classical_risk == QuantumRiskLevel.SAFE
+    assert enriched.algorithm_name == "ml_kem_768"
+    assert enriched.key_size is None
+    assert enriched.evidence[-1].nist_standard == "FIPS 203"
+    assert "ML-KEM-768" in enriched.recommendation
+    assert enrich_finding(enriched) == enriched
+
+
+@pytest.mark.parametrize(
+    "algorithm,function,expected,absent",
+    [
+        ("RSA", CryptoFunction.SIGN, "ML-DSA", "ML-KEM"),
+        ("RSA", CryptoFunction.ENCRYPT, "ML-KEM", "ML-DSA"),
+        ("ECDH", CryptoFunction.KEY_EXCHANGE, "ML-KEM", "ML-DSA"),
+        ("ECDSA", CryptoFunction.KEYGEN, "ML-DSA", "ML-KEM"),
+        ("SHA256WITHRSA", CryptoFunction.UNKNOWN, "ML-DSA", "ML-KEM"),
+    ],
+)
+def test_recommendations_choose_pqc_by_function(rsa_finding, algorithm, function, expected, absent):
+    finding = rsa_finding.model_copy(update={
+        "algorithm_name": algorithm, "crypto_function": function,
+        "key_size": None, "recommendation": None,
+    })
+    recommendation = enrich_finding(finding).recommendation
+    assert expected in recommendation
+    assert absent not in recommendation
+
+
+def test_unknown_rsa_purpose_does_not_choose_one_replacement(rsa_finding):
+    finding = rsa_finding.model_copy(update={"recommendation": None})
+    recommendation = enrich_finding(finding).recommendation
+    assert "Confirmar o uso da chave" in recommendation
+    assert "ML-DSA" in recommendation and "ML-KEM" in recommendation
+
+
+def test_classical_ecb_recommendation_is_kept_even_with_quantum_safe(rsa_finding):
+    finding = rsa_finding.model_copy(update={
+        "algorithm_name": "AES", "key_size": 256, "mode": "ECB",
+        "recommendation": None,
+    })
+    enriched = enrich_finding(finding)
+    assert enriched.quantum_risk == QuantumRiskLevel.SAFE
+    assert "AES-256-GCM" in enriched.recommendation
+    assert "nonces únicos" in enriched.recommendation
+    assert "ML-KEM" not in enriched.recommendation
+
+
+def test_generated_recommendation_changes_with_hash_parameters(rsa_finding):
+    finding = rsa_finding.model_copy(update={
+        "algorithm_name": "SHA-256", "key_size": None,
+        "crypto_function": CryptoFunction.DIGEST, "recommendation": None,
+    })
+    first = enrich_finding(finding)
+    assert "Avaliar SHA-384" in first.recommendation
+    first.algorithm_name = "SHA-384"
+    second = enrich_finding(first)
+    assert second.quantum_risk == QuantumRiskLevel.SAFE
+    assert "Avaliar SHA-384" not in second.recommendation
+    assert second.recommendation != first.recommendation
+    assert enrich_finding(second) == second
+
+
+def test_manual_recommendation_remains_manual_after_enrichment(rsa_finding):
+    first = enrich_finding(rsa_finding)
+    assert first.recommendation == "Recomendação existente"
+    assert enrich_finding(first) == first
+    automatic = enrich_finding(rsa_finding.model_copy(update={"recommendation": None}))
+    automatic.recommendation = "Decisão revista pela equipa"
+    assert enrich_finding(automatic).recommendation == "Decisão revista pela equipa"
+
+
+def test_cloud_inventory_gets_recommendations_on_every_result():
+    from scanner.cloud_scanner import scan
+    directory = Path(__file__).resolve().parents[1] / "support-materials" / "cloud-posture"
+    enriched = enrich_findings(scan(directory))
+    assert len(enriched) == 99
+    assert all(finding.recommendation for finding in enriched)
+    assert enrich_findings(enriched) == enriched

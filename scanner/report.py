@@ -40,9 +40,21 @@ def _json_safe(obj: Any) -> Any:
     return obj
 
 
-def _extract_risk_tier(finding: Any) -> str:
+def _extract_risk_tier(finding: Any, risk_field: str = "quantum_risk") -> str:
     """Extract and normalize risk tier string from finding model or dictionary."""
     raw_val: Any = None
+    if risk_field != "quantum_risk":
+        if isinstance(finding, dict):
+            raw_val = finding.get(risk_field)
+            present = risk_field in finding
+        else:
+            raw_val = getattr(finding, risk_field, None)
+            present = hasattr(finding, risk_field)
+        if present:
+            norm = str(_unwrap_enum(raw_val)).strip().capitalize()
+            return norm if norm in RISK_TIERS else "Unknown"
+        # Legacy reports supplied only one risk field.
+        return _extract_risk_tier(finding)
     if isinstance(finding, dict):
         raw_val = (
             finding.get("quantum_risk")
@@ -99,6 +111,7 @@ def risk_weight(risk: QuantumRiskLevel | str | None) -> float:
 
 def generate_summary_counts(
     findings: list[Any],
+    risk_field: str = "quantum_risk",
 ) -> dict[str, int]:
     """Return count mapping partitioned by risk tier and total findings.
 
@@ -117,7 +130,7 @@ def generate_summary_counts(
         return counts
 
     for finding in findings:
-        tier = _extract_risk_tier(finding)
+        tier = _extract_risk_tier(finding, risk_field)
         counts[tier] = counts.get(tier, 0) + 1
         counts["Total"] += 1
 
@@ -130,8 +143,9 @@ def calculate_quantum_risk_score(
     """Calculate normalized Quantum Risk Score (0.0 to 100.0).
 
     This is an exposure score where higher values represent greater risk:
-    - 0.0 indicates no quantum or classical risk exposure.
-    - 100.0 indicates complete exposure across all inventoried cryptographic assets.
+    - Scores only assessed quantum findings; classical risk is separate.
+    - Unknown findings are excluded from the denominator and shown as coverage.
+    - 0.0 with zero coverage does not imply safety.
 
     Returns:
         Normalized score rounded to two decimal places, or 0.0 for empty input.
@@ -140,7 +154,7 @@ def calculate_quantum_risk_score(
         return 0.0
 
     counts = generate_summary_counts(findings)
-    total = counts["Total"]
+    total = counts["Total"] - counts["Unknown"]
     if total == 0:
         return 0.0
 
@@ -161,21 +175,23 @@ def calculate_hygiene_score(
     """Calculate overall Crypto Hygiene health score (0 to 100).
 
     Higher values represent healthier posture:
-    - 100 indicates perfect cryptographic hygiene (zero penalty).
-    - 0 indicates critical compromise across all inventoried assets.
-    - Returns 100 when findings list is empty as the safe baseline.
+    - Measures classical assessment with a coverage penalty for unknown assets.
+    - 100 means all inventoried assets are classically safe in assessed criteria.
+    - 0 can mean critical findings or lack of verification; it is not proof of compromise.
+    - Empty input returns 0 and posture NO_DATA.
     """
     if not findings:
-        return 100
+        return 0
 
-    counts = generate_summary_counts(findings)
+    counts = generate_summary_counts(findings, "classical_risk")
     total = counts["Total"]
     if total == 0:
-        return 100
+        return 0
 
     penalty = (
         counts["Critical"] * HYGIENE_CRITICAL_WEIGHT
         + counts["Medium"] * HYGIENE_MEDIUM_WEIGHT
+        + counts["Unknown"] * 100.0
     ) / total
 
     raw_score = 100.0 - penalty
@@ -192,19 +208,21 @@ def calculate_posture_status(
         - 'AT_RISK': No Critical findings, but quantum-vulnerable findings detected.
         - 'SECURE': Non-empty findings with zero Critical or quantum-vulnerable findings.
         - 'NO_DATA': Empty findings inventory.
+        - 'INCOMPLETE': No known elevated risk but an assessment is unknown.
     """
     if not findings:
         return "NO_DATA"
 
     counts = generate_summary_counts(findings)
+    classical_counts = generate_summary_counts(findings, "classical_risk")
     if counts["Total"] == 0:
         return "NO_DATA"
 
-    if counts["Critical"] > 0:
+    if counts["Critical"] > 0 or classical_counts["Critical"] > 0:
         return "FAILING"
 
     # Check for Grover/quantum-vulnerable primitives (Medium tier or explicit flag)
-    has_quantum_vulnerable = counts["Medium"] > 0
+    has_quantum_vulnerable = counts["Medium"] > 0 or classical_counts["Medium"] > 0
     if not has_quantum_vulnerable:
         for f in findings:
             if isinstance(f, dict):
@@ -220,6 +238,9 @@ def calculate_posture_status(
 
     if has_quantum_vulnerable:
         return "AT_RISK"
+
+    if counts["Unknown"] > 0 or classical_counts["Unknown"] > 0:
+        return "INCOMPLETE"
 
     return "SECURE"
 
@@ -310,6 +331,10 @@ def build_report_summary(
         "hygiene_score": hygiene_score,
         "posture_status": posture_status,
         "counts": counts,
+        "classical_counts": generate_summary_counts(findings, "classical_risk"),
+        "quantum_coverage_percent": round(
+            100 * (counts["Total"] - counts["Unknown"]) / counts["Total"], 2
+        ) if counts["Total"] else 0.0,
         "total_findings": counts["Total"],
         "critical_findings": categorized["critical"],
         "medium_findings": categorized["medium"],

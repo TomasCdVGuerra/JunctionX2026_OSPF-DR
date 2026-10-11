@@ -128,7 +128,7 @@ def test_extract_evidence_complete():
     assert evidence["Line Number"] == "42"
     assert evidence["Matched Snippet"] == "rsa.generate_private_key()"
     assert evidence["Rule ID"] == "py-rsa-1024"
-    assert evidence["NIST Standard"] == "FIPS 186-4"
+    assert evidence["NIST References"] == "FIPS 186-4"
 
 
 def test_extract_evidence_line_zero():
@@ -618,7 +618,7 @@ def test_load_findings_dataframe_malformed_components_resilience():
     expected_cols = [
         "Algorithm", "Risk Rating", "Scanner source", "Source Type", "Source Path",
         "Operation", "Quantum Vulnerable", "Quantum Safe", "Line Number",
-        "Matched Snippet", "Rule ID", "NIST Standard", "BOM Reference", "Description",
+        "Matched Snippet", "Rule ID", "NIST References", "BOM Reference", "Description",
     ]
 
     for bad_cbom in (
@@ -725,7 +725,7 @@ def test_extract_evidence_deep_fallback_hierarchy():
     assert ev2["Source Path"] == "nested/path.py"
     assert ev2["Line Number"] == "99"
     assert ev2["Rule ID"] == "RULE-PY"
-    assert ev2["NIST Standard"] == "FIPS 197"
+    assert ev2["NIST References"] == "FIPS 197"
 
 
 def test_pcap_fallback_empty_and_tls_detection(tmp_path):
@@ -742,13 +742,15 @@ def test_pcap_fallback_empty_and_tls_detection(tmp_path):
     tls_pcap.write_bytes(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03")
     tls_findings = dashboard._scan_pcap_file_fallback(tls_pcap)
     assert len(tls_findings) == 1
-    assert tls_findings[0]["canonical_algorithm"] == "ECDHE-RSA-AES128-GCM-SHA256"
-    assert tls_findings[0]["line_number"] is None
-    assert tls_findings[0]["packet_number"] == 1
+    assert tls_findings[0].algorithm_name == "TLS"
+    assert tls_findings[0].confidence == "low"
+    assert tls_findings[0].observation == "observed"
+    assert tls_findings[0].evidence[0].line_number is None
+    assert tls_findings[0].evidence[0].packet_number is None
 
 
 def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
-    """Regression: Cloud fallback preserves RSA-3072, ECC-NIST-P384 without defaulting to RSA-2048."""
+    """Explicit key parameters are preserved; symmetric defaults stay unresolved."""
     cloud_json = tmp_path / "kms.json"
     cloud_json.write_text(json.dumps({
         "Keys": [
@@ -758,11 +760,11 @@ def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
         ]
     }))
     findings = dashboard._scan_cloud_file_fallback(cloud_json)
-    algos = {f["canonical_algorithm"] for f in findings}
-    assert "RSA-3072" in algos
-    assert "ECC-NIST-P384" in algos
-    assert "AES-256-GCM" in algos
-    assert "RSA-2048" not in algos
+    parameters = {(f.algorithm_name, f.key_size) for f in findings}
+    assert ("RSA", 3072) in parameters
+    assert ("EC", 384) in parameters
+    assert ("SYMMETRIC_DEFAULT", None) in parameters
+    assert all(f.mode is None for f in findings)
 
 
 def test_source_fallback_ignores_comments(tmp_path):

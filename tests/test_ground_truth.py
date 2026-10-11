@@ -50,6 +50,7 @@ def _create_mock_finding(
         source_type=source_type,  # type: ignore
         observation="observed",
         quantum_risk=risk_level,
+        classical_risk=risk_level,
         evidence=[
             Evidence(
                 file_path="mock_file.py",
@@ -76,12 +77,12 @@ def test_report_1_empty_findings():
         "Total": 0,
     }
     assert calculate_quantum_risk_score(findings) == 0.0
-    assert calculate_hygiene_score(findings) == 100
+    assert calculate_hygiene_score(findings) == 0
     assert calculate_posture_status(findings) == "NO_DATA"
     summary = build_report_summary(findings)
     assert summary["total_findings"] == 0
     assert summary["posture_status"] == "NO_DATA"
-    assert summary["hygiene_score"] == 100
+    assert summary["hygiene_score"] == 0
 
 
 def test_report_2_all_critical():
@@ -140,10 +141,10 @@ def test_report_5_mixed_findings():
         "Unknown": 1,
         "Total": 4,
     }
-    # (1 * 1.0 + 1 * 0.3 + 0 + 0) / 4 * 100 = 1.3 / 4 * 100 = 32.5
-    assert calculate_quantum_risk_score(findings) == 32.5
-    # 100 - (1 * 100 + 1 * 30) / 4 = 100 - 32.5 = 67.5 -> 67
-    assert calculate_hygiene_score(findings) == 67
+    # Exposure is measured over the three assessed quantum findings.
+    assert calculate_quantum_risk_score(findings) == 43.33
+    # Unassessed classical findings do not contribute verified hygiene.
+    assert calculate_hygiene_score(findings) == 42
     assert calculate_posture_status(findings) == "FAILING"
 
 
@@ -172,7 +173,7 @@ def test_report_7_correct_score_normalization():
 def test_report_8_no_division_by_zero():
     empty_list: list[Any] = []
     assert calculate_quantum_risk_score(empty_list) == 0.0
-    assert calculate_hygiene_score(empty_list) == 100
+    assert calculate_hygiene_score(empty_list) == 0
     assert calculate_posture_status(empty_list) == "NO_DATA"
 
 

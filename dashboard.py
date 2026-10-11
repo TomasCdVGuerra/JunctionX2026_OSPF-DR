@@ -9,6 +9,14 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from scanner.models import CryptoFinding
+from scanner.dashboard_fallbacks import (
+    scan_source_file as _scan_source_file_fallback,
+    scan_cloud_file as _scan_cloud_file_fallback,
+    scan_pcap_file as _scan_pcap_file_fallback,
+)
+from scanner.risk import enrich_finding
+from scanner.nist_references import collect_nist_references
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +263,28 @@ def _extract_native_crypto_properties(
 
 def _extract_evidence(component: dict[str, Any]) -> dict[str, str]:
     """Extract evidence from CycloneDX evidence.occurrences."""
+    properties = _extract_properties(component.get("properties", []))
+    stored = properties.get("cryptotrace:evidence")
+    if stored:
+        try:
+            items = json.loads(stored)
+        except (ValueError, TypeError):
+            items = []
+        if isinstance(items, list):
+            sources = [item for item in items if isinstance(item, dict)
+                       and item.get("rule_id") != "RISK-ENGINE-ASSESSMENT"]
+            if sources:
+                first = sources[0]
+                standard = collect_nist_references(items)
+                return {
+                    "Source Path": _normalise(first.get("file_path")),
+                    "Line Number": _normalise(first.get("line_number"), "N/A"),
+                    "JSON Path": _normalise(first.get("json_path"), "N/A"),
+                    "Packet Number": _normalise(first.get("packet_number"), "N/A"),
+                    "Matched Snippet": _normalise(first.get("matched_snippet")),
+                    "Rule ID": _normalise(first.get("rule_id")),
+                    "NIST References": _normalise(standard),
+                }
     evidence = component.get("evidence", {})
     if not isinstance(evidence, dict):
         return {}
@@ -299,7 +329,7 @@ def _extract_evidence(component: dict[str, Any]) -> dict[str, str]:
             or occurrence.get("ruleID")
             or source.get("ruleId")
         ),
-        "NIST Standard": _normalise(
+        "NIST References": _normalise(
             occurrence.get("nistStandard")
             or source.get("nistStandard")
         ),
@@ -359,8 +389,7 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
 
     risk_rating = property_value("cryptotrace:riskRating")
 
-    if risk_rating != "unknown":
-        risk_rating = risk_rating.capitalize()
+    risk_rating = risk_rating.capitalize()
 
     source_type = property_value("cryptotrace:sourceType")
     source_path = property_value("cryptotrace:sourcePath")
@@ -400,6 +429,9 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     row = {
         "Algorithm": _normalise(component.get("name")),
         "Risk Rating": risk_rating,
+        "Classical Risk": property_value("cryptotrace:classical_risk").capitalize(),
+        "Recommendation": property_value("cryptotrace:recommendation"),
+        "Observation": property_value("cryptotrace:observation"),
         "Scanner source": scanner_source,
         "Source Type": source_type,
         "Source Path": source_path,
@@ -411,13 +443,15 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
             "cryptotrace:quantumSafe"
         ),
         "Line Number": evidence.get("Line Number", "unknown"),
+        "JSON Path": evidence.get("JSON Path", "N/A"),
+        "Packet Number": evidence.get("Packet Number", "N/A"),
         "Matched Snippet": evidence.get(
             "Matched Snippet",
             "unknown",
         ),
         "Rule ID": evidence.get("Rule ID", "unknown"),
-        "NIST Standard": evidence.get(
-            "NIST Standard",
+        "NIST References": evidence.get(
+            "NIST References",
             "unknown",
         ),
         "BOM Reference": _normalise(component.get("bom-ref")),
@@ -509,6 +543,9 @@ def load_findings_dataframe(
             c_func = getattr(component, "crypto_function", None)
             rows.append({
                 "Algorithm": _normalise(getattr(component, "algorithm_name", None)),
+                "Classical Risk": _normalise(getattr(component, "classical_risk", None)).capitalize(),
+                "Recommendation": _normalise(getattr(component, "recommendation", None)),
+                "Observation": _normalise(getattr(component, "observation", None)),
                 "Risk Rating": (
                     q_risk.value if q_risk is not None and hasattr(q_risk, "value") else str(q_risk or "unknown")
                 ).capitalize(),
@@ -521,15 +558,20 @@ def load_findings_dataframe(
                 "Quantum Vulnerable": "true" if getattr(q_risk, "value", q_risk) == "critical" else "false",
                 "Quantum Safe": "true" if getattr(q_risk, "value", q_risk) == "safe" else "false",
                 "Line Number": str(getattr(first_ev, "line_number", "unknown")),
+                "JSON Path": _normalise(getattr(first_ev, "json_path", None), "N/A"),
+                "Packet Number": _normalise(getattr(first_ev, "packet_number", None), "N/A"),
                 "Matched Snippet": _normalise(getattr(first_ev, "matched_snippet", None)),
                 "Rule ID": _normalise(getattr(first_ev, "rule_id", None)),
-                "NIST Standard": _normalise(getattr(first_ev, "nist_standard", None)),
+                "NIST References": _normalise(collect_nist_references(ev_list)),
                 "BOM Reference": "unknown",
-                "Description": _normalise(getattr(first_ev, "risk_reasoning", None)),
+                "Description": _normalise(CBOMSerializer._finding_value(component, "explanation") if CBOMSerializer else getattr(first_ev, "risk_reasoning", None)),
             })
 
     columns = [
         "Algorithm",
+        "Classical Risk",
+        "Recommendation",
+        "Observation",
         "Risk Rating",
         "Scanner source",
         "Source Type",
@@ -540,7 +582,7 @@ def load_findings_dataframe(
         "Line Number",
         "Matched Snippet",
         "Rule ID",
-        "NIST Standard",
+        "NIST References",
         "BOM Reference",
         "Description",
     ]
@@ -627,7 +669,7 @@ def _render_metrics(full_dataframe) -> None:
 
     if calculate_hygiene_score is not None:
         hygiene_score = calculate_hygiene_score(
-            [{"quantum_risk": r} for r in full_dataframe["Risk Rating"]]
+            [{"classical_risk": row.get("Classical Risk", row["Risk Rating"])} for _, row in full_dataframe.iterrows()]
         )
     else:
         hygiene_score = max(
@@ -640,6 +682,7 @@ def _render_metrics(full_dataframe) -> None:
             [
                 {
                     "quantum_risk": row["Risk Rating"],
+                    "classical_risk": row.get("Classical Risk", row["Risk Rating"]),
                     "quantum_vulnerable": str(row["Quantum Vulnerable"]).lower() == "true",
                 }
                 for _, row in full_dataframe.iterrows()
@@ -650,6 +693,7 @@ def _render_metrics(full_dataframe) -> None:
             "AT_RISK": "⚠️ AT RISK",
             "SECURE": "✅ SECURE",
             "NO_DATA": "ℹ️ NO DATA",
+            "INCOMPLETE": "ℹ️ INCOMPLETE",
         }
         posture_status = posture_map.get(raw_status, "ℹ️ NO DATA")
     else:
@@ -668,7 +712,14 @@ def _render_metrics(full_dataframe) -> None:
     columns[4].metric("Safe", safe_count)
 
     st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
-    st.caption("Hygiene = share of healthy assets. Posture fails if any Critical finding exists.")
+    st.caption("Hygiene reflects classical assessment and coverage; unknown assets are unverified. Risk Rating shows quantum risk. Posture considers both risks.")
+    classical_critical = int((full_dataframe["Classical Risk"].astype(str).str.lower() == "critical").sum())
+    if classical_critical:
+        st.error(f"CLASSICAL RISK: {classical_critical} findings require remediation of classical weaknesses.")
+    quantum_unknown = int((full_dataframe["Risk Rating"].astype(str).str.lower() == "unknown").sum())
+    classical_unknown = int((full_dataframe["Classical Risk"].astype(str).str.lower() == "unknown").sum())
+    if quantum_unknown or classical_unknown:
+        st.info(f"Assessment incomplete: {quantum_unknown} quantum and {classical_unknown} classical findings remain unknown.")
 
     if crit_count > 0:
         st.error(
@@ -749,6 +800,11 @@ def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
             version="1.0.0",
         )
         for finding in findings:
+            # Real scanners and fallbacks share the contract and central engine.
+            if isinstance(finding, CryptoFinding):
+                scanner_src = _get_finding_scanner_source(finding)
+                finding = enrich_finding(finding)
+                _set_finding_scanner_source(finding, scanner_src)
             serializer.add_finding(finding)
             scanner_src = _get_finding_scanner_source(finding)
             if serializer.document.get("components"):
@@ -766,327 +822,6 @@ def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
         "version": 1,
         "components": [],
     }
-
-
-def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
-    """Scan source code for cryptographic primitives if scanner is unavailable."""
-    findings: list[dict[str, Any]] = []
-    display_name = path.name
-
-    try:
-        content = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return findings
-
-    lines = content.splitlines()
-
-    for idx, raw_line in enumerate(lines, start=1):
-        line = re.sub(r"#.*$", "", raw_line)
-        line = re.sub(r"//.*$", "", line).strip()
-        if not line:
-            continue
-
-        # 1. RSA
-        if "rsa.generate_private_key" in line or 'KeyPairGenerator.getInstance("RSA")' in line or "rsa.GenerateKey(" in line:
-            size_match = re.search(r"(\d{4})", line)
-            key_size = size_match.group(1) if size_match else "2048"
-            findings.append({
-                "canonical_algorithm": f"RSA-{key_size}",
-                "explanation": "RSA is vulnerable to Shor's quantum factoring algorithm.",
-                "risk_rating": "Critical",
-                "quantum_vulnerable": True,
-                "quantum_safe": False,
-                "source_type": "source-code",
-                "source_path": display_name,
-                "operation": "KEYGEN",
-                "line_number": idx,
-                "matched_snippet": raw_line.strip(),
-                "rule_id": "src-rsa-keygen",
-                "nist_standard": "FIPS 186-5",
-            })
-
-        # 2. Ed25519
-        if ("Ed25519" in line or "ed25519" in line) and (
-            "PrivateKey" in line or "GenerateKey" in line or "Sign" in line
-        ):
-                findings.append({
-                    "canonical_algorithm": "Ed25519",
-                    "explanation": "Ed25519 signature algorithm is broken by Shor's quantum algorithm.",
-                    "risk_rating": "Critical",
-                    "quantum_vulnerable": True,
-                    "quantum_safe": False,
-                    "source_type": "source-code",
-                    "source_path": display_name,
-                    "operation": "SIGN",
-                    "line_number": idx,
-                    "matched_snippet": raw_line.strip(),
-                    "rule_id": "src-ed25519-sign",
-                    "nist_standard": "FIPS 186-5",
-                })
-
-        # 3. Weak hashes: MD5, SHA-1 (require API-level call patterns)
-        if re.search(r"\b(?:hashlib\.md5|md5\.New|md5\.Sum|MessageDigest\.getInstance\s*\(\s*\"MD5\"\)|crypto/md5)\b", line, re.IGNORECASE):
-            findings.append({
-                "canonical_algorithm": "MD5",
-                "explanation": "MD5 is cryptographically broken by classical collision attacks.",
-                "risk_rating": "Critical",
-                "quantum_vulnerable": True,
-                "quantum_safe": False,
-                "source_type": "source-code",
-                "source_path": display_name,
-                "operation": "DIGEST",
-                "line_number": idx,
-                "matched_snippet": raw_line.strip(),
-                "rule_id": "src-md5-digest",
-                "nist_standard": "none",
-            })
-        elif re.search(r"\b(?:hashlib\.sha1|sha1\.New|sha1\.Sum|MessageDigest\.getInstance\s*\(\s*\"SHA-?1\"\)|crypto/sha1)\b", line, re.IGNORECASE) or "sha1withrsa" in line.lower():
-            findings.append({
-                "canonical_algorithm": "SHA-1",
-                "explanation": "SHA-1 is deprecated and vulnerable to practical collision attacks.",
-                "risk_rating": "Critical",
-                "quantum_vulnerable": True,
-                "quantum_safe": False,
-                "source_type": "source-code",
-                "source_path": display_name,
-                "operation": "DIGEST",
-                "line_number": idx,
-                "matched_snippet": raw_line.strip(),
-                "rule_id": "src-sha1-digest",
-                "nist_standard": "FIPS 180-4",
-            })
-
-        # 4. AES
-        if "algorithms.AES(" in line or 'Cipher.getInstance("AES' in line or "aes.NewCipher(" in line:
-            mode = "ECB" if "ECB" in line else "GCM"
-            risk = "Critical" if mode == "ECB" else "Safe"
-            findings.append({
-                "canonical_algorithm": "AES-256-GCM" if mode != "ECB" else "AES-ECB",
-                "explanation": "ECB mode leaks plaintext patterns." if mode == "ECB" else "AES-256 maintains 128-bit quantum security.",
-                "risk_rating": risk,
-                "quantum_vulnerable": (risk == "Critical"),
-                "quantum_safe": (risk == "Safe"),
-                "source_type": "source-code",
-                "source_path": display_name,
-                "operation": "ENCRYPT",
-                "line_number": idx,
-                "matched_snippet": raw_line.strip(),
-                "rule_id": "src-aes-cipher",
-                "nist_standard": "FIPS 197",
-            })
-
-        # 5. PBKDF2
-        if re.search(r"\b(?:PBKDF2|pbkdf2_hmac|SecretKeyFactory\.getInstance\s*\(\s*\"PBKDF2|deriveKey)\b", line):
-            findings.append({
-                "canonical_algorithm": "PBKDF2",
-                "explanation": "Key derivation function maintains symmetric quantum resistance.",
-                "risk_rating": "Safe",
-                "quantum_vulnerable": False,
-                "quantum_safe": True,
-                "source_type": "source-code",
-                "source_path": display_name,
-                "operation": "KDF",
-                "line_number": idx,
-                "matched_snippet": raw_line.strip(),
-                "rule_id": "src-pbkdf2-kdf",
-                "nist_standard": "none",
-            })
-
-    for f in findings:
-        f["Scanner source"] = "FALLBACK heuristic"
-        f["scanner_source"] = "FALLBACK heuristic"
-
-    return findings
-
-
-def _scan_cloud_file_fallback(path: Path) -> list[dict[str, Any]]:
-    """Scan cloud posture JSON files if scanner is unavailable."""
-    findings: list[dict[str, Any]] = []
-    display_name = path.name
-
-    try:
-        content = path.read_text(encoding="utf-8")
-        data = json.loads(content)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return findings
-
-    if not isinstance(data, dict):
-        return findings
-
-    # KMS keys
-    for idx, key in enumerate(data.get("Keys", []), start=1):
-        if not isinstance(key, dict):
-            continue
-        spec = str(key.get("KeySpec", "unknown"))
-        arn = key.get("KeyArn", key.get("KeyId", "unknown"))
-        spec_upper = spec.upper()
-        if "RSA_2048" in spec_upper:
-            algo = "RSA-2048"
-            risk = "Critical"
-        elif "RSA_3072" in spec_upper:
-            algo = "RSA-3072"
-            risk = "Critical"
-        elif "RSA_4096" in spec_upper:
-            algo = "RSA-4096"
-            risk = "Critical"
-        elif "RSA" in spec_upper:
-            algo = "RSA"
-            risk = "Critical"
-        elif "P384" in spec_upper:
-            algo = "ECC-NIST-P384"
-            risk = "Critical"
-        elif "P521" in spec_upper:
-            algo = "ECC-NIST-P521"
-            risk = "Critical"
-        elif "P256" in spec_upper or "ECC" in spec_upper:
-            algo = "ECC-NIST-P256"
-            risk = "Critical"
-        elif "SYMMETRIC" in spec_upper or "AES" in spec_upper:
-            algo = "AES-256-GCM"
-            risk = "Safe"
-        else:
-            algo = spec if spec != "unknown" else "unknown"
-            risk = "Unknown"
-
-        findings.append({
-            "canonical_algorithm": algo,
-            "explanation": f"KMS key {spec} is quantum vulnerable." if risk == "Critical" else (f"KMS key {spec} is quantum resistant." if risk == "Safe" else f"KMS key {spec} risk unverified."),
-            "risk_rating": risk,
-            "quantum_vulnerable": (risk == "Critical"),
-            "quantum_safe": (risk == "Safe"),
-            "source_type": "cloud-posture",
-            "source_path": display_name,
-            "operation": "SIGN_VERIFY" if risk == "Critical" else "ENCRYPT_DECRYPT",
-            "line_number": idx,
-            "matched_snippet": f"{arn} (KeySpec: {spec})",
-            "rule_id": "aws-kms-key-spec",
-            "nist_standard": "FIPS 186-5" if risk == "Critical" else ("FIPS 197" if risk == "Safe" else "none"),
-        })
-
-    # Load balancers
-    for lb in data.get("LoadBalancers", []):
-        if not isinstance(lb, dict):
-            continue
-        for idx, listener in enumerate(lb.get("Listeners", []), start=1):
-            if not isinstance(listener, dict):
-                continue
-            proto = listener.get("Protocol", "")
-            port = listener.get("Port", 0)
-            if proto == "HTTP" or str(port) == "80":
-                findings.append({
-                    "canonical_algorithm": "Cleartext-HTTP",
-                    "explanation": "Plaintext traffic over unencrypted port 80.",
-                    "risk_rating": "Critical",
-                    "quantum_vulnerable": True,
-                    "quantum_safe": False,
-                    "source_type": "cloud-posture",
-                    "source_path": display_name,
-                    "operation": "KEY_EXCHANGE",
-                    "line_number": idx,
-                    "matched_snippet": f"Listener port {port} unencrypted HTTP",
-                    "rule_id": "aws-alb-cleartext",
-                    "nist_standard": "none",
-                })
-            elif listener.get("SslPolicy"):
-                policy = str(listener.get("SslPolicy"))
-                findings.append({
-                    "canonical_algorithm": "TLS-Classical-Cipher",
-                    "explanation": f"ELB policy {policy} negotiates classical cipher suites.",
-                    "risk_rating": "Critical",
-                    "quantum_vulnerable": True,
-                    "quantum_safe": False,
-                    "source_type": "cloud-posture",
-                    "source_path": display_name,
-                    "operation": "KEY_EXCHANGE",
-                    "line_number": idx,
-                    "matched_snippet": f"SslPolicy: {policy}",
-                    "rule_id": "aws-alb-ssl-policy",
-                    "nist_standard": "SP 800-52",
-                })
-
-    # ACM certificates
-    for idx, cert in enumerate(data.get("Certificates", []), start=1):
-        if not isinstance(cert, dict):
-            continue
-        key_algo = str(cert.get("KeyAlgorithm", "RSA_2048"))
-        domain = cert.get("DomainName", "unknown")
-        algo_name = key_algo.replace("_", "-") if ("RSA" in key_algo or "ECC" in key_algo) else key_algo
-        findings.append({
-            "canonical_algorithm": algo_name,
-            "explanation": f"Public key certificate ({key_algo}) is vulnerable to Shor's algorithm.",
-            "risk_rating": "Critical",
-            "quantum_vulnerable": True,
-            "quantum_safe": False,
-            "source_type": "cloud-posture",
-            "source_path": display_name,
-            "operation": "SIGN_VERIFY",
-            "line_number": idx,
-            "matched_snippet": f"Certificate for {domain} ({key_algo})",
-            "rule_id": "aws-acm-cert",
-            "nist_standard": "FIPS 186-5",
-        })
-
-    for f in findings:
-        f["Scanner source"] = "FALLBACK heuristic"
-        f["scanner_source"] = "FALLBACK heuristic"
-
-    return findings
-
-
-def _scan_pcap_file_fallback(path: Path) -> list[dict[str, Any]]:
-    """Scan network PCAP captures for cleartext and TLS handshakes."""
-    findings: list[dict[str, Any]] = []
-    display_name = path.name
-
-    try:
-        raw_bytes = path.read_bytes()
-    except OSError:
-        return findings
-
-    if not raw_bytes:
-        return findings
-
-    # 1. Cleartext HTTP
-    if b"HTTP/" in raw_bytes or b"GET " in raw_bytes or b"POST " in raw_bytes:
-        findings.append({
-            "canonical_algorithm": "Cleartext-HTTP",
-            "explanation": "Unencrypted HTTP network traffic observed in capture.",
-            "risk_rating": "Critical",
-            "quantum_vulnerable": True,
-            "quantum_safe": False,
-            "source_type": "network-capture",
-            "source_path": display_name,
-            "operation": "KEY_EXCHANGE",
-            "line_number": None,
-            "packet_number": 1,
-            "matched_snippet": "Unencrypted HTTP traffic on port 80",
-            "rule_id": "pcap-cleartext-http",
-            "nist_standard": "none",
-        })
-
-    # 2. Negotiated TLS handshake (heuristic check for TLS record markers 0x1603 or TLS keyword)
-    if b"\x16\x03" in raw_bytes or b"TLS" in raw_bytes:
-        findings.append({
-            "canonical_algorithm": "ECDHE-RSA-AES128-GCM-SHA256",
-            "explanation": "Negotiated TLS cipher suite relies on classical key exchange.",
-            "risk_rating": "Critical",
-            "quantum_vulnerable": True,
-            "quantum_safe": False,
-            "source_type": "network-capture",
-            "source_path": display_name,
-            "operation": "KEY_EXCHANGE",
-            "line_number": None,
-            "packet_number": 1,
-            "matched_snippet": "TLS 1.2 handshake negotiated classical cipher suite",
-            "rule_id": "pcap-tls-cipher",
-            "nist_standard": "FIPS 186-5",
-        })
-
-    for f in findings:
-        f["Scanner source"] = "FALLBACK heuristic"
-        f["scanner_source"] = "FALLBACK heuristic"
-
-    return findings
 
 
 def scan_uploaded_files(
@@ -1216,7 +951,7 @@ def scan_uploaded_files(
                         _tag_findings_scanner_source(real_results, f"real: {scanner_mod.__name__}")
                         src_findings = real_results if isinstance(real_results, list) else []
 
-                if not src_findings and src_path.suffix.lower() != ".go":
+                if not real_scanner or (not src_findings and src_path.suffix.lower() != ".go"):
                     logger.info("Using FALLBACK heuristic for source-code: %s", orig_name)
                     src_findings = _scan_source_file_fallback(src_path)
 
@@ -1390,7 +1125,7 @@ def render_dashboard(
                 for t in dataframe.loc[fallback_mask, "Source Type"].dropna().unique()
             )
             types_str = ", ".join(used_types) if used_types else "unknown inputs"
-            st.warning(f"⚠️ Fallback heuristic scanner used for: {types_str}")
+            st.warning(f"⚠️ Fallback heuristic scanner used for: {types_str}. Discovery is limited; policy expansion and network negotiation require the full scanners.")
 
     filtered_dataframe = dataframe[
         dataframe["Source Type"].isin(selected_sources)
@@ -1406,7 +1141,7 @@ def render_dashboard(
             "Source Path",
             "Matched Snippet",
             "Rule ID",
-            "NIST Standard",
+            "NIST References",
             "Description",
         ]
 
@@ -1448,6 +1183,7 @@ def render_dashboard(
         _render_download_button(cbom)
 
     st.subheader("Cryptographic findings")
+    st.caption("NIST References identify relevant technical publications; they do not establish compliance or certification. CSV exports include the findings displayed by the current filters.")
 
     if filtered_dataframe.empty:
         st.info("No findings match the selected filters.")
@@ -1456,14 +1192,20 @@ def render_dashboard(
     display_columns = [
         "Algorithm",
         "Risk Rating",
+        "Classical Risk",
+        "Recommendation",
+        "Observation",
+        "Description",
         "Scanner source",
         "Source Type",
         "Source Path",
         "Operation",
         "Line Number",
+        "JSON Path",
+        "Packet Number",
         "Matched Snippet",
         "Rule ID",
-        "NIST Standard",
+        "NIST References",
         "Quantum Vulnerable",
         "Quantum Safe",
     ]

@@ -133,6 +133,15 @@ class CBOMSerializer:
         names = _FINDING_FIELD_ALIASES.get(name, (name,))
 
         if name == "explanation":
+            evidence = (
+                finding.get("evidence", []) if isinstance(finding, dict)
+                else getattr(finding, "evidence", [])
+            )
+            for item in evidence:
+                rule = item.get("rule_id") if isinstance(item, dict) else getattr(item, "rule_id", None)
+                reasoning = item.get("risk_reasoning") if isinstance(item, dict) else getattr(item, "risk_reasoning", None)
+                if rule == "RISK-ENGINE-ASSESSMENT" and reasoning:
+                    return reasoning
             val = cls._get_attribute(finding, *names, default=None)
             if val is not None and val != "unknown":
                 return val
@@ -294,6 +303,25 @@ class CBOMSerializer:
             ],
         }
 
+        for field in ("classical_risk", "recommendation", "observation", "confidence", "key_size", "mode"):
+            value = self._get_attribute(finding, field, default=None)
+            if value is not None:
+                component["properties"].append({
+                    "name": f"cryptotrace:{field}", "value": self._stringify(value),
+                })
+        evidence = (
+            finding.get("evidence", []) if isinstance(finding, dict)
+            else getattr(finding, "evidence", [])
+        )
+        if evidence:
+            serialized_evidence = [
+                item.model_dump(mode="json", exclude_none=True)
+                if hasattr(item, "model_dump") else item for item in evidence
+            ]
+            component["properties"].append({
+                "name": "cryptotrace:evidence",
+                "value": json.dumps(serialized_evidence, ensure_ascii=False),
+            })
         self.document["components"].append(component)
 
     def to_json(self, filepath: str | Path | None = None) -> str:
