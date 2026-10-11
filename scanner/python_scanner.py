@@ -73,12 +73,12 @@ class cryptoVisitor(ast.NodeVisitor):
         self.source_lines = source_lines
         self.findings: list[cryptoFinding] = []
         self.alias : dict[str, str] = {}
-        self.start_modelus: list[str] = []
+        self.star_modules: list[str] = []
         self.mode_vars: dict[str, str] = {}
         self._call_funcs: set[int] = set()
 
 #---------------------------------------------- classe de imports
-    def visit_module(self, node: ast.Module):
+    def visit_Module(self, node: ast.Module):
         for n in ast.walk(node):
             if isinstance(n, ast.Import):
                 for a in n.names:
@@ -92,7 +92,7 @@ class cryptoVisitor(ast.NodeVisitor):
                     continue
                 for a in n.names:
                     if a.name == "*":
-                        self.start_modelus.append(n.module)
+                        self.star_modules.append(n.module)
                     else:
                         self.alias[a.asname or a.name] = f"{n.module}.{a.name}"
         self.generic_visit(node)
@@ -103,7 +103,9 @@ class cryptoVisitor(ast.NodeVisitor):
                 return node.id
             elif isinstance(node, ast.Attribute):
                 value = self._get_func_name(node.value)
-                return f"{value}.{node.attr}" if value else node.attr
+                if not value:
+                    return ""
+                return f"{value}.{node.attr}"
             return ""
 #--------------------------------------------------- classe nome nó resolve alias e imports para achar o nome completo
     def _candidates(self, node) -> list[str]:
@@ -115,7 +117,7 @@ class cryptoVisitor(ast.NodeVisitor):
             full_name = self.alias[head] + (f".{rest}" if rest else "")
             candidates = [full_name]
         else:
-            candidates = [raw] + [f"{m}.{raw}" for m in self.start_modules]
+            candidates = [raw] + [f"{m}.{raw}" for m in self.star_modules]
         return [_normalize_module(c) for c in candidates]
 
 #-------------------------------------------------------------------- classe compara os nomes ressolvidos com a tabela cifras fraca
@@ -124,18 +126,18 @@ class cryptoVisitor(ast.NodeVisitor):
             label = _suffix_match(c, table)
             if label:
                 return label
-            return None
+        return None
 
 #------------------------------------------------------------------ variaveis de modo 
-    def _track_assign(self, target, value):
-        if isinstance(value, (ast.name, ast.Attribute, ast.Constant)):
-            for t in target:
+    def _track_assign(self, targets, value):
+        if isinstance(value, (ast.Name, ast.Attribute, ast.Constant)):
+            for t in targets:
                 if isinstance(t, ast.Name):
                     self.mode_vars[t.id] = ast.unparse(value)
 
     def visit_Assign(self, node: ast.Assign):
         if node.value is not None:
-            self._track_assign([node.target], node.value)
+            self._track_assign(node.targets, node.value)
         self.generic_visit(node)
 
     def _find_mode(self, node: ast.Call):

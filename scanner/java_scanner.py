@@ -2,6 +2,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 import re
 import json
+import sys
 
 @dataclass
 class cryptoFinding:

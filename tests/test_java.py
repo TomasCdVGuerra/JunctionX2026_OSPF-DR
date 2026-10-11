@@ -4,7 +4,9 @@ from collections import Counter
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
+ROOT = AQUI.parent
 sys.path.insert(0, str(AQUI))
+sys.path.insert(0, str(ROOT / "scanner"))
 from java_scanner import scan_file
 
 falhou = False
