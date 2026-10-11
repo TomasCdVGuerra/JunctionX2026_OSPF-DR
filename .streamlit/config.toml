@@ -1,0 +1,7 @@
+[theme]
+base = "dark"
+primaryColor = "#2563eb"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

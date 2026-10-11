@@ -64,28 +64,50 @@ Findings are evaluated against post-quantum threat models (Shor's and Grover's a
   * HMAC-SHA256, PBKDF2 with SHA-256
   * NIST PQC Standards: FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA)
 
-### Handling of Classically Broken Algorithms
-In this codebase, classically broken primitives (**MD5**, **SHA-1**, **RSA-1024**, and **AES in ECB mode**) are assigned directly to the **Critical** tier. Their evidence reasoning explicitly cites classical vulnerabilities (e.g. practical collision attacks or ECB pattern leakage). There is no separate boolean `deprecated` flag; classical failure is enforced as an immediate Critical classification.
+### Dual-Axis Risk Model (Quantum Risk vs. Classical Risk)
+QuantumTrace evaluates all cryptographic assets along two distinct, independent security axes:
 
-*(Note: The bundled sample dataset contains zero Medium findings because all symmetric ciphers in the sample repos are 256-bit AES, while legacy hashes and RSA are classified as Critical).*
+* **Quantum Risk**: Future exposure to quantum attacks:
+  * **Shor's algorithm**: Breaks public-key cryptography (factoring and discrete logarithms: RSA, ECC, DH). Classified as **Critical**.
+  * **Grover's algorithm**: Effectively halves symmetric key strength (AES-128 halved to 64 bits $\rightarrow$ **Medium**; AES-256 halved to 128 bits $\rightarrow$ **Safe**).
+* **Classical Risk**: Current pre-quantum security strength:
+  * Primitives broken by practical pre-quantum cryptanalysis (**MD5**, **SHA-1**, **DES**, **AES-ECB**) are **Critical**.
+  * Parameter sizes deprecated pre-quantum (**RSA-1024**) are **Medium**.
+  * Robust pre-quantum primitives (**RSA-2048**, **AES-GCM**, **SHA-256**) are **Safe**.
+
+**Why can an algorithm have different ratings on each axis?**
+* **RSA-2048**: `Quantum Risk = Critical` (broken by Shor's algorithm; must migrate to PQC) while `Classical Risk = Safe` (provides ~112 bits of classical security; not broken today).
+* **AES-128-GCM**: `Quantum Risk = Medium` (halved to ~64 bits quantum security) while `Classical Risk = Safe` (128 bits pre-quantum security).
+* **MD5 / SHA-1**: `Quantum Risk = Critical` and `Classical Risk = Critical` (classically broken).
+
+*(Note: The CBOM serializer preserves classical risk as the standard CycloneDX property `cryptotrace:classicalRisk` alongside `cryptotrace:riskRating`).*
 
 ---
 
-## Scoring Model: Hygiene vs Posture
+## Scoring Model: Hygiene, Risk Exposure & Posture Status
 
-QuantumTrace separates volume-based health (**Crypto Hygiene**) from fatal single points of failure (**Posture Status**):
+The dashboard exposes the centralized risk and reporting engine (`scanner/report.py` and `scanner/risk.py`). All executive metrics are computed from the **complete active scan inventory**, while search, source, and risk-tier filters apply strictly to detailed views.
 
-### 1. Crypto Hygiene Score (`0–100`)
+### 1. Quantum Risk Score (`0.00–100.00 / 100`)
+$$\text{Quantum Risk Score} = \frac{\text{Critical} \times 1.0 + \text{Medium} \times 0.3}{\text{Total Assets}} \times 100$$
+* A centralized exposure score reflecting organizational vulnerability to quantum cryptanalysis.
+* Critical assets contribute full weight ($1.0$), Medium assets contribute partial weight ($0.3$), Safe and Unknown assets contribute $0.0$.
+* For an inventory with 32 Critical and 11 Safe findings (43 total):
+  $$\frac{32 \times 1.0 + 0 \times 0.3}{43} \times 100 = 74.42 / 100$$
+
+### 2. Crypto Hygiene Score (`0–100`)
 $$\text{Crypto Hygiene} = \max\left(0, \operatorname{int}\left(100 - \frac{\text{Critical} \times 100 + \text{Medium} \times 30}{\text{Total Assets}}\right)\right)$$
+* Measures overall proportion of healthy cryptographic assets across the entire inventory.
+* Penalizes **100 points per Critical** and **30 points per Medium** finding, normalized over all assets.
 
-* Measures the proportion of healthy cryptographic assets across the entire inventory.
-* Penalizes **100 points per Critical** and **30 points per Medium** finding, averaged across all inventoried assets.
-* Safe and unrecognised assets carry **0 penalty**, contributing positively to the overall denominator.
+### 3. Posture Status
+* **🚨 FAILING**: Critical quantum vulnerabilities present (`Critical > 0`).
+* **⚠️ AT_RISK**: Medium quantum vulnerabilities present without Critical findings (`Medium > 0`).
+* **✅ SECURE**: All inventoried cryptography is quantum-safe (`Critical == 0` and `Medium == 0` with findings present).
+* **ℹ️ NO_DATA**: No cryptographic components discovered (`Total == 0`).
 
-### 2. Posture Status
-* **🚨 FAILING**: Triggered if any Critical finding exists (`crit_count > 0`). Displays an immediate migration alert banner.
-* **⚠️ AT RISK**: Triggered if quantum-vulnerable assets exist without Critical findings (`vuln_count > 0`).
-* **✅ SECURE**: All inventoried cryptography is quantum-resistant.
+> **Filter Independence**: Executive metrics (Quantum Risk Score, Crypto Hygiene, Posture Status, and overall counts) always reflect the full active scan. Filter and search bars dynamically adjust the detailed findings table, donut chart, and displayed finding inspector.
+
 
 ---
 
