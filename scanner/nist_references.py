@@ -5,8 +5,12 @@ O mapeamento descreve a primitiva e o uso reconhecidos, sem preencher parâmetro
 em falta nem alterar a classificação de risco.
 """
 from scanner.algorithms import (
-    normalise, parse_hash_construction, parse_legacy_cipher_suite,
-    parse_pqc_algorithm, parse_primitive_name, parse_signature_algorithm,
+    normalise,
+    parse_hash_construction,
+    parse_legacy_cipher_suite,
+    parse_pqc_algorithm,
+    parse_primitive_name,
+    parse_signature_algorithm,
     parse_tls13_cipher_suite,
 )
 from scanner.models import CryptoFunction

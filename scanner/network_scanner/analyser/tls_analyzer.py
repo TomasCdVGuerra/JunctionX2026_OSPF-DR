@@ -4,7 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from scanner.models import AssetType, CryptoFinding, QuantumRiskLevel
-from scanner.network_scanner.analyser.risk_assessment import RiskAssessment, enrich_finding
+from scanner.network_scanner.analyser.risk_assessment import (
+    RiskAssessment,
+    enrich_finding,
+)
 from scanner.network_scanner.model_adapter import findings_from_metadata
 
 
@@ -25,22 +28,22 @@ def analyze_tls(entries: list[dict], path: Path) -> list[CryptoFinding]:
                 override = (
                     QuantumRiskLevel.UNKNOWN,
                     QuantumRiskLevel.CRITICAL,
-                    f"{finding.protocol} is an obsolete protocol version that "
+                    (f"{finding.protocol} is an obsolete protocol version that "
                     "must no longer be offered or negotiated; its version "
-                    "alone does not determine quantum resistance.",
-                    "Disable this version and require TLS 1.2 or TLS 1.3 "
-                    "with an appropriate cryptographic configuration.",
+                    "alone does not determine quantum resistance."),
+                    ("Disable this version and require TLS 1.2 or TLS 1.3 "
+                    "with an appropriate cryptographic configuration."),
                 )
             else:
                 override = (
                     QuantumRiskLevel.UNKNOWN,
                     QuantumRiskLevel.UNKNOWN,
-                    f"The recorded TLS version {finding.protocol} alone does "
+                    (f"The recorded TLS version {finding.protocol} alone does "
                     "not establish the security of the cipher, key exchange, "
-                    "authentication or complete session.",
-                    "Review the selected cryptographic primitives, their "
+                    "authentication or complete session."),
+                    ("Review the selected cryptographic primitives, their "
                     "parameters and handshake evidence before assessing "
-                    "session security.",
+                    "session security."),
                 )
         assessed.append(enrich_finding(finding, risk_override=override))
 

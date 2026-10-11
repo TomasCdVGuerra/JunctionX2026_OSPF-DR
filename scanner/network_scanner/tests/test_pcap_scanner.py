@@ -1,21 +1,22 @@
 import copy
 import json
 from pathlib import Path
-
-import pytest
 from unittest.mock import patch
 
-from scanner.models import AssetType, CryptoFinding, QuantumRiskLevel as Q
+import pytest
+
+from scanner.models import AssetType, CryptoFinding
+from scanner.models import QuantumRiskLevel as Q
 from scanner.network_scanner import pcap_scanner
 from scanner.network_scanner.parser import tshark_parser
 from scanner.network_scanner.parser.tshark_parser import (
     PcapParserError,
-    extract_tls_metadata,
-    extract_ssh_metadata,
+    _normalize_tls_version,
     detect_cleartext_traffic,
-    parse_network_pcap,
-    _normalize_tls_version
+    extract_ssh_metadata,
+    extract_tls_metadata,
 )
+
 
 def test_missing_pcap_file():
     """Verifica que uma captura inexistente origina PcapParserError com uma mensagem de ficheiro nao encontrado."""

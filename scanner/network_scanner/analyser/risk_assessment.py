@@ -9,8 +9,11 @@ from pathlib import Path
 from typing import Literal
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
-from scanner.network_scanner.algorithm_mapper import GROUPS, Observation, network_evidence
-
+from scanner.network_scanner.algorithm_mapper import (
+    GROUPS,
+    Observation,
+    network_evidence,
+)
 
 RiskAssessment = tuple[
     QuantumRiskLevel,

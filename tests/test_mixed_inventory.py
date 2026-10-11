@@ -11,7 +11,6 @@ import jsonschema
 import dashboard
 from scanner.network_scanner import pcap_scanner
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

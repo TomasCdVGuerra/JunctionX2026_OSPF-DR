@@ -14,7 +14,6 @@ from typing import Literal
 
 from scanner.models import CryptoFunction, Evidence
 
-
 Observation = Literal[
     "declared",
     "configured",

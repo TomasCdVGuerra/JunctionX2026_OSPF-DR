@@ -7,7 +7,6 @@ import pytest
 from scanner.models import AssetType, QuantumRiskLevel
 from scanner.network_scanner.analyser.ssh_analyzer import analyze_ssh
 
-
 PATH = Path("captured.pcap")
 
 

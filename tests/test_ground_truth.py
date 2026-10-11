@@ -19,7 +19,7 @@ from scanner.report import (
     group_by_algorithm,
     group_by_source,
 )
-from scanner.risk import enrich_finding_risk
+from scanner.risk import enrich_finding, enrich_findings
 
 EXPECTED_FINDINGS_PATH = Path("tests/fixtures/expected_findings.json")
 
@@ -314,7 +314,7 @@ def test_integration_cbom_generation_retains_enriched_risk():
             )
         ],
     )
-    enriched = enrich_finding_risk(finding)
+    enriched = enrich_finding(finding)
 
     serializer = CBOMSerializer()
     serializer.add_finding(enriched)
@@ -341,7 +341,7 @@ def test_integration_go_findings_retain_correct_risk_tiers():
     findings = scan_source_directory(sample_go_dir)
     assert len(findings) > 0
 
-    enriched = [enrich_finding_risk(f) for f in findings]
+    enriched = enrich_findings(findings)
     counts = generate_summary_counts(enriched)
     assert counts["Critical"] > 0, "Go samples contain Shor-vulnerable and broken primitives"
     assert counts["Safe"] > 0, "Go samples contain safe symmetric and HMAC primitives"

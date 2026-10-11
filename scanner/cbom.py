@@ -143,7 +143,7 @@ class CBOMSerializer:
             for item in evidence:
                 rule = item.get("rule_id") if isinstance(item, dict) else getattr(item, "rule_id", None)
                 reasoning = item.get("risk_reasoning") if isinstance(item, dict) else getattr(item, "risk_reasoning", None)
-                if rule == "RISK-ENGINE-ASSESSMENT" and reasoning:
+                if rule in ("RISK-ASSESSMENT", "RISK-ENGINE-ASSESSMENT") and reasoning:
                     return reasoning
             val = cls._get_attribute(finding, *names, default=None)
             if val is not None and val != "unknown":

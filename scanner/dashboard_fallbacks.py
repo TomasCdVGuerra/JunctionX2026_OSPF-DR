@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any, Literal
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence
 
 
-def _finding(path: Path, name: str, source: str, evidence: Evidence, **parameters) -> CryptoFinding:
+def _finding(path: Path, name: str, source: Literal["source-code", "cloud-posture", "network-capture"], evidence: Evidence, **parameters: Any) -> CryptoFinding:
     finding = CryptoFinding(
         algorithm_name=name, source_type=source,
         observation="configured" if source == "cloud-posture" else "observed",
@@ -35,7 +36,7 @@ def scan_source_file(path: Path) -> list[CryptoFinding]:
         if raw.lstrip().startswith(("#", "//", "/*", "*")):
             continue
         line = re.sub(r"\s+(?:#|//).*$", "", raw)
-        detected = []
+        detected: list[tuple[str, CryptoFunction, dict[str, Any], str]] = []
         if re.search(r'\brsa\.(?:generate_private_key|GenerateKey)\s*\(|KeyPairGenerator\.getInstance\s*\(\s*"RSA"', line):
             # Only recognised size argument positions count as observed sizes.
             size = re.search(r"key_size\s*=\s*([1-9]\d*)\b", line)

@@ -5,7 +5,6 @@ from scanner.models import CryptoFinding, Evidence
 from scanner.network_scanner import pcap_scanner as network_scanner
 from scanner.nist_references import nist_references_for_algorithm
 
-
 NETWORK_ASSESSMENT_RULE_ID = "NETWORK-RISK-ASSESSMENT"
 
 

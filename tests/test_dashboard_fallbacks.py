@@ -4,7 +4,11 @@ import json
 import pytest
 
 import dashboard
-from scanner.dashboard_fallbacks import scan_cloud_file, scan_pcap_file, scan_source_file
+from scanner.dashboard_fallbacks import (
+    scan_cloud_file,
+    scan_pcap_file,
+    scan_source_file,
+)
 
 
 @pytest.mark.parametrize("source,name,size,quantum,classical", [

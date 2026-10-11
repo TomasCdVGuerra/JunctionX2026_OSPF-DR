@@ -1,19 +1,18 @@
 """Integration tests exercise actual TShark reads of capture formats and frames."""
 from __future__ import annotations
 
-import os
 import json
 import logging
-from pathlib import Path
+import os
 import shutil
 import struct
 import subprocess
+from pathlib import Path
 
 import pytest
 
-from scanner.network_scanner.parser import tshark_parser as parser
 from scanner.models import CryptoFinding, CryptoFunction, QuantumRiskLevel
-
+from scanner.network_scanner.parser import tshark_parser as parser
 
 CAPTURE = Path(__file__).resolve().parents[3] / "support-materials" / "network-capture" / "network.pcap"
 

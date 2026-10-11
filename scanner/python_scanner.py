@@ -1,10 +1,11 @@
-from dataclasses import dataclass, asdict
-from pathlib import Path
-import json
 import ast
+import json
 import re
 import sys
 import tokenize
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
 
 @dataclass
 class cryptoFinding:
@@ -73,7 +74,7 @@ class cryptoVisitor(ast.NodeVisitor):
         self.source_lines = source_lines
         self.findings: list[cryptoFinding] = []
         self.alias : dict[str, str] = {}
-        self.start_modelus: list[str] = []
+        self.start_modules: list[str] = []
         self.mode_vars: dict[str, str] = {}
         self._call_funcs: set[int] = set()
 
@@ -92,7 +93,7 @@ class cryptoVisitor(ast.NodeVisitor):
                     continue
                 for a in n.names:
                     if a.name == "*":
-                        self.start_modelus.append(n.module)
+                        self.start_modules.append(n.module)
                     else:
                         self.alias[a.asname or a.name] = f"{n.module}.{a.name}"
         self.generic_visit(node)
@@ -124,18 +125,18 @@ class cryptoVisitor(ast.NodeVisitor):
             label = _suffix_match(c, table)
             if label:
                 return label
-            return None
+        return None
 
 #------------------------------------------------------------------ variaveis de modo 
     def _track_assign(self, target, value):
-        if isinstance(value, (ast.name, ast.Attribute, ast.Constant)):
+        if isinstance(value, (ast.Name, ast.Attribute, ast.Constant)):
             for t in target:
                 if isinstance(t, ast.Name):
                     self.mode_vars[t.id] = ast.unparse(value)
 
     def visit_Assign(self, node: ast.Assign):
         if node.value is not None:
-            self._track_assign([node.target], node.value)
+            self._track_assign(node.targets, node.value)
         self.generic_visit(node)
 
     def _find_mode(self, node: ast.Call):
@@ -304,7 +305,7 @@ class cryptoVisitor(ast.NodeVisitor):
         
 #---------------------------------------------------------------------------------------- registro
     def add_finding(self, node: ast.AST, usage: str, algorithm: str, params: dict[str, str]):
-        line_number = node.lineno
+        line_number = getattr(node, "lineno", 0)
         if 1 <= line_number <= len(self.source_lines):
             evidence_line = self.source_lines[line_number - 1].strip()
         else:

@@ -1,10 +1,16 @@
 import json
 from pathlib import Path
+
 import pytest
 
-from scanner.cloud_scanner import parse_kms_keys, parse_acm_certificates, parse_load_balancers, load_elb_policy_map, scan
-from scanner.models import AssetType, QuantumRiskLevel, CryptoFunction
-
+from scanner.cloud_scanner import (
+    load_elb_policy_map,
+    parse_acm_certificates,
+    parse_kms_keys,
+    parse_load_balancers,
+    scan,
+)
+from scanner.models import AssetType, CryptoFunction, QuantumRiskLevel
 
 CLOUD_DIR = (
     Path(__file__).resolve().parents[1]
