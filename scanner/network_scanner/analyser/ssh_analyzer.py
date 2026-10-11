@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scanner.models import CryptoFinding, QuantumRiskLevel
 from scanner.network_scanner.algorithm_mapper import SSH_CIPHERS, SSH_FIELDS
-from scanner.network_scanner.Analyser.risk_assessment import enrich_finding
+from scanner.network_scanner.analyser.risk_assessment import enrich_finding
 from scanner.network_scanner.model_adapter import findings_from_metadata
 
 
@@ -61,6 +61,7 @@ def analyze_ssh(entries: list[dict], path: Path) -> list[CryptoFinding]:
     from each explicit role and their complete endpoints are reversed.
     Additional offers, including ambiguous rekeys or retransmissions, are
     kept advertised because the metadata cannot identify exchange rounds.
+    Disjoint required lists prevent every inferred selection for that pair.
     Banner-only entries do not count as algorithm offers. Missing algorithms
     or host-key requirements prevent a complete handshake assessment.
 
@@ -118,6 +119,21 @@ def analyze_ssh(entries: list[dict], path: Path) -> list[CryptoFinding]:
                 if name in server_names:
                     selections[field] = name
                     break
+
+        # RFC 4253 section 7.1 requires disconnect when a required list has
+        # no common choice. A common cipher alone cannot establish selection
+        # when, for example, the peers have incompatible key exchanges.
+        required_fields = {
+            "kex_algorithms", "server_host_key_algorithms",
+            "encryption_client_to_server", "encryption_server_to_client",
+        }
+        for direction in ("client_to_server", "server_to_client"):
+            cipher = selections.get(f"encryption_{direction}")
+            if cipher in SSH_CIPHERS and not _is_aead(cipher):
+                required_fields.add(f"mac_{direction}")
+        if any(client_entry.get(field) and server_entry.get(field) and field not in selections
+               for field in required_fields):
+            continue
 
         for field, name in selections.items():
             if field.startswith("mac_"):

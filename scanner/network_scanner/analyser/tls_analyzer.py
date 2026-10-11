@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scanner.models import AssetType, CryptoFinding, QuantumRiskLevel
-from scanner.network_scanner.Analyser.risk_assessment import RiskAssessment, enrich_finding
+from scanner.network_scanner.analyser.risk_assessment import RiskAssessment, enrich_finding
 from scanner.network_scanner.model_adapter import findings_from_metadata
 
 

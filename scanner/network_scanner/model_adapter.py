@@ -98,7 +98,7 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
                 if client:
                     # Proposals can include suites from different TLS versions.
                     mapping_version = ("TLS 1.3" if suite.tls13 else
-                                       protocol if protocol in {"TLS 1.0", "TLS 1.1", "TLS 1.2"} else None)
+                                       protocol if protocol in {"SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2"} else None)
                 try:
                     primitives = cipher_primitives(suite, mapping_version)
                 except CipherSuiteVersionError:

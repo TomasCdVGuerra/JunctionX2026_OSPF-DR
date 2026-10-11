@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction as F, QuantumRiskLevel as Q
-from scanner.network_scanner.Analyser.tls_analyzer import analyze_tls
+from scanner.network_scanner.analyser.tls_analyzer import analyze_tls
 
 
 PATH = Path("captured.pcap")
@@ -66,7 +66,10 @@ def test_server_selection_uses_only_selected_cipher_and_hybrid_group():
     assert (version.quantum_risk, version.classical_risk) == (Q.UNKNOWN, Q.UNKNOWN)
 
 
-@pytest.mark.parametrize("version,cipher", [("TLS 1.2", "0x1302"), ("TLS 1.3", "0xc02f")])
+@pytest.mark.parametrize("version,cipher", [
+    ("TLS 1.2", "0x1302"), ("TLS 1.3", "0xc02f"),
+    ("TLS 1.1", "0x009d"), ("TLS 1.0", "0xc023"), ("SSL 3.0", "0xcca8"),
+])
 def test_incompatible_server_cipher_preserves_unknown_risk_and_mapping_evidence(version, cipher):
     findings = analyze_tls([hello(
         handshake_type="Server Hello", tls_version=version, selected_cipher=cipher,
@@ -80,6 +83,25 @@ def test_incompatible_server_cipher_preserves_unknown_risk_and_mapping_evidence(
     assert context["cipher_suite"] == cipher
     assert context["mapping_status"] == "incompatible-version"
     assert finding.evidence[0].packet_number == 7
+
+
+@pytest.mark.parametrize("handshake,observation", [
+    ("Client Hello", "advertised"), ("Server Hello", "negotiated"),
+])
+def test_ssl3_evidence_names_its_mac_without_claiming_tls_hmac_security(handshake, observation):
+    findings = analyze_tls([hello(
+        handshake_type=handshake, tls_version="SSL 3.0", supported_versions=["SSL 3.0"],
+        cipher_suites=["0x000a"], selected_cipher="0x000a",
+    )], PATH)
+    [mac] = [finding for finding in findings if finding.crypto_function == F.MAC]
+    assert mac.algorithm_name == "SSL3-MAC-SHA-1"
+    assert mac.observation == observation
+    assert (mac.quantum_risk, mac.classical_risk) == (Q.UNKNOWN, Q.UNKNOWN)
+    assert json.loads(mac.evidence[0].matched_snippet)["cipher_suite"] == "0x000a"
+    assert mac.evidence[0].packet_number == 7
+    assert not any(finding.algorithm_name.startswith("HMAC-") for finding in findings)
+    [protocol] = [finding for finding in findings if finding.asset_type == AssetType.PROTOCOL]
+    assert protocol.classical_risk == Q.CRITICAL
 
 
 def test_unknown_identifiers_are_preserved_without_guessing_cryptography():

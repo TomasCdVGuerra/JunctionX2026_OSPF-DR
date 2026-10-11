@@ -79,6 +79,44 @@ def test_smtp_upgrade_and_greeting_commands_do_not_prove_cleartext_application_u
     assert extract(monkeypatch, {"smtp.req.command": [command]}, destination_port="25") == []
 
 
+@pytest.mark.parametrize(("command", "argument"), [
+    ("AUTH", "TLS"), ("AUTH", "SSL"), ("auth", "tls"), ("auth", " ssl "),
+])
+def test_ftp_tls_upgrade_requests_do_not_prove_cleartext_application_use(monkeypatch, command, argument):
+    assert extract(monkeypatch, {
+        "ftp.request.command": [command], "ftp.request.arg": [argument],
+    }, destination_port="21") == []
+    assert "ftp.request.arg" in parser._run_tshark_json.call_args.args[2]
+
+
+@pytest.mark.parametrize("fields", [
+    {"ftp.request.command": ["AUTH"], "ftp.request.arg": ["GSSAPI"]},
+    {"ftp.request.command": ["AUTH"]},
+    {"ftp.request.command": ["PASS"], "ftp.request.arg": ["TLS"]},
+])
+def test_ftp_other_authentication_and_credentials_remain_plaintext(monkeypatch, fields):
+    [entry] = extract(monkeypatch, fields, destination_port="21")
+    assert entry["protocol"] == "FTP"
+
+
+@pytest.mark.parametrize("operation", ["23", "0x17"])
+def test_ldap_starttls_requests_do_not_prove_cleartext_application_use(monkeypatch, operation):
+    assert extract(monkeypatch, {
+        "ldap.protocolOp": [operation], "ldap.requestName": ["1.3.6.1.4.1.1466.20037"],
+    }, destination_port="389") == []
+    assert "ldap.requestName" in parser._run_tshark_json.call_args.args[2]
+
+
+@pytest.mark.parametrize("fields", [
+    {"ldap.protocolOp": ["23"], "ldap.requestName": ["1.3.6.1.4.1.4203.1.11.1"]},
+    {"ldap.protocolOp": ["23"]},
+    {"ldap.protocolOp": ["0"], "ldap.requestName": ["1.3.6.1.4.1.1466.20037"]},
+])
+def test_ldap_other_operations_remain_plaintext(monkeypatch, fields):
+    [entry] = extract(monkeypatch, fields, destination_port="389")
+    assert entry["protocol"] == "LDAP"
+
+
 def startup(*, version: int = 196608, body: bytes = b"user\x00private-user\x00database\x00private-db\x00\x00") -> bytes:
     return struct.pack("!II", 8 + len(body), version) + body
 

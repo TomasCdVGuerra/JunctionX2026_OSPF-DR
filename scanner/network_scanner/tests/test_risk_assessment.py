@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction as F, Evidence, QuantumRiskLevel as Q
-from scanner.network_scanner.Analyser import risk_assessment as risk
+from scanner.network_scanner.analyser import risk_assessment as risk
 
 
 @pytest.mark.parametrize("name,bits,mode,function,quantum,classical", [

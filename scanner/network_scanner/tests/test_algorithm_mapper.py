@@ -39,6 +39,29 @@ def test_older_suite_rejects_tls13_version(identifier):
         mapper.cipher_primitives(mapper.CIPHER_SUITES[identifier], "TLS 1.3")
 
 
+@pytest.mark.parametrize("identifier", [
+    0x003C, 0x003D, 0x0067, 0x006B,
+    0x009C, 0x009D, 0x009E, 0x009F,
+    0xC023, 0xC024, 0xC027, 0xC028,
+    0xC02B, 0xC02C, 0xC02F, 0xC030,
+    0xCCA8, 0xCCA9, 0xCCAA,
+])
+@pytest.mark.parametrize("version", ["SSL 3.0", "TLS 1.0", "TLS 1.1"])
+def test_tls12_suites_reject_versions_without_their_mac_or_aead_support(identifier, version):
+    """Reject CBC-SHA2 and AEAD suites unsupported before TLS 1.2."""
+    with pytest.raises(mapper.CipherSuiteVersionError, match="incompatible"):
+        mapper.cipher_primitives(mapper.CIPHER_SUITES[identifier], version)
+
+
+@pytest.mark.parametrize("identifier,digest", [(0x000A, "SHA-1"), (0x0004, "MD5")])
+def test_ssl3_mac_is_distinct_from_tls_hmac(identifier, digest):
+    primitives = mapper.cipher_primitives(mapper.CIPHER_SUITES[identifier], "SSL 3.0")
+    assert [p for p in primitives if p.crypto_function == F.MAC] == [
+        mapper.Primitive(f"SSL3-MAC-{digest}", F.MAC),
+    ]
+    assert not any(p.crypto_function == F.KDF for p in primitives)
+
+
 @pytest.mark.parametrize("version", [None, "future-version"])
 def test_unknown_version_does_not_invent_incompatibility(version):
     """Preserva a traducao conhecida sem afirmar incompatibilidade com versao desconhecida."""

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
-from scanner.network_scanner.Analyser.cleartext_analyzer import analyze_cleartext
+from scanner.network_scanner.analyser.cleartext_analyzer import analyze_cleartext
 
 
 PATH = Path("captured.pcap")

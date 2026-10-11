@@ -357,8 +357,12 @@ def cipher_primitives(
 ) -> list[Primitive]:
     """Decompor uma cipher suite nos componentes criptograficos."""
 
+    # All SHA-2 suites in this finite registry require at least TLS 1.2
+    # (RFC 5246, 5288, 5289 and 7905), including the CBC suites.
     if ((suite.tls13 and version in {"SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2"})
-            or (not suite.tls13 and version == "TLS 1.3")):
+            or (not suite.tls13 and version == "TLS 1.3")
+            or (suite.hash_name in {"SHA-256", "SHA-384"}
+                and version in {"SSL 3.0", "TLS 1.0", "TLS 1.1"})):
         raise CipherSuiteVersionError(f"{suite.name} is incompatible with {version}")
 
     primitives: list[Primitive] = []
@@ -394,9 +398,12 @@ def cipher_primitives(
         )
     else:
         if suite.mode == "CBC" or suite.cipher in {"RC4", "NULL"}:
+            # SSL 3.0 uses its own keyed MAC, not TLS's HMAC construction
+            # (RFC 6101 section 5.2.3.1).
+            mac_prefix = "SSL3-MAC" if version == "SSL 3.0" else "HMAC"
             primitives.append(
                 Primitive(
-                    f"HMAC-{suite.hash_name}",
+                    f"{mac_prefix}-{suite.hash_name}",
                     CryptoFunction.MAC,
                 )
             )

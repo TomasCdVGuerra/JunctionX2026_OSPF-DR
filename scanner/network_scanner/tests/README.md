@@ -27,9 +27,10 @@ Esta configuração seleciona `test_pcap_scanner.py`, `test_parser_*.py`,
 `test_algorithm_mapper.py`, `test_risk_assessment.py`, `test_cleartext_analyzer.py`,
 `test_tls_analyzer.py` e `test_ssh_analyzer.py`.
 Exige 100% de cobertura combinada de linhas e ramificações do `tshark_parser.py`,
-do adaptador `model_adapter.py`, do mapper `algorithm_mapper.py` e dos módulos
-`Analyser/risk_assessment.py`, `Analyser/cleartext_analyzer.py`,
-`Analyser/tls_analyzer.py` e `Analyser/ssh_analyzer.py`.
+do coordenador `pcap_scanner.py`, do adaptador `model_adapter.py`,
+do mapper `algorithm_mapper.py` e dos módulos
+`analyser/risk_assessment.py`, `analyser/cleartext_analyzer.py`,
+`analyser/tls_analyzer.py` e `analyser/ssh_analyzer.py`.
 Também trata avisos Python como erros. Um teste falhado ou cobertura inferior faz
 o comando terminar com erro. Não desativa testes de outros módulos na suite global.
 
@@ -52,7 +53,7 @@ saltados por falta de TShark não representam uma validação da captura real.
   do mesmo tipo, com aviso que identifica o pacote ambíguo.
 - Listas SSH em CSV e identificação conservadora de cliente/servidor.
 - Protocolos em texto claro e negativos para portas comuns sem prova de protocolo,
-  PostgreSQL SSL/GSSENC e SMTP STARTTLS.
+  PostgreSQL SSL/GSSENC, SMTP STARTTLS, FTP AUTH TLS/SSL e pedidos LDAP StartTLS.
 - Captura fornecida, formatos PCAP/PCAPNG e capturas inválidas ou truncadas.
 - Política de risco quântico e clássico, parâmetros desconhecidos, justificação
   e recomendação, sem depender da extração de protocolos.
@@ -115,7 +116,7 @@ helpers de contexto/evidência. Não decide os riscos dos algoritmos.
 `model_adapter.py` transforma metadados em findings com riscos `unknown`,
 sem chamar a política de análise.
 
-`Analyser/risk_assessment.py` contém `assess_primitive()` e `make_finding()`:
+`analyser/risk_assessment.py` contém `assess_primitive()` e `make_finding()`:
 o primeiro avalia as primitivas e o segundo cria um finding com essa avaliação,
 ou com uma avaliação explícita fornecida pelo analisador. Os analisadores cleartext,
 TLS e SSH reutilizam esse módulo para aplicar a política comum. As regras que
@@ -150,7 +151,7 @@ vazias ou sem protocolo válido e a preservação dos metadados originais.
 .\.venv\Scripts\python.exe -B -m pytest -q scanner/network_scanner/tests/test_tls_analyzer.py
 ```
 
-`analyze_tls(entries, path)`, em `Analyser/tls_analyzer.py`, recebe as entradas
+`analyze_tls(entries, path)`, em `analyser/tls_analyzer.py`, recebe as entradas
 TLS extraídas pelo parser e devolve uma lista de `CryptoFinding` com riscos,
 justificação, recomendação e evidência. Reutiliza a conversão do adapter e a
 política comum para avaliar as primitivas identificadas e acrescenta a regra
@@ -164,6 +165,9 @@ As propostas do cliente continuam `advertised`; uma seleção do servidor é
 do pacote, sem alterar as entradas recebidas. Uma cifra TLS 1.3 não fornece
 por si só o grupo de troca de chaves ou o algoritmo de autenticação da sessão.
 HelloRetryRequest é excluído, tal como na conversão existente do adapter.
+Suites incompatíveis com a versão indicada conservam a evidência com
+`mapping_status="incompatible-version"` e riscos desconhecidos. O MAC de
+SSL 3.0 é identificado como `SSL3-MAC`, sem lhe atribuir a avaliação de HMAC.
 
 ## Testes do analisador SSH
 
@@ -171,7 +175,7 @@ HelloRetryRequest é excluído, tal como na conversão existente do adapter.
 .\.venv\Scripts\python.exe -B -m pytest -q scanner/network_scanner/tests/test_ssh_analyzer.py
 ```
 
-`analyze_ssh(entries, path)`, em `Analyser/ssh_analyzer.py`, recebe as entradas
+`analyze_ssh(entries, path)`, em `analyser/ssh_analyzer.py`, recebe as entradas
 SSH extraídas pelo parser. Avalia os algoritmos anunciados e pode acrescentar
 resultados de seleção inferida ao relacionar propostas de cliente e servidor
 na mesma ligação. A escolha segue a preferência do cliente entre as opções
@@ -180,6 +184,9 @@ comuns de cada categoria e direção.
 A inferência exige exatamente uma proposta de cada papel no mesmo stream,
 papéis explicitamente identificados e endpoints completos em sentidos opostos.
 Entradas de banner sem listas de algoritmos não contam como propostas.
+Se ambos os participantes anunciam opções incompatíveis numa categoria
+obrigatória, mantêm-se apenas os anúncios de todo o par. As listas MAC não
+impedem a seleção quando a cifra escolhida nessa direção é AEAD.
 A seleção inferida usa `observation="negotiated"` e `confidence="medium"`.
 A evidência explica a inferência; duas propostas compatíveis não confirmam
 que o handshake tenha terminado. Sem identificação fiável da ligação ou dos
@@ -197,5 +204,5 @@ a produzir findings com riscos `unknown`, preservando o contrato de extração.
 ```
 
 A suite global inclui os testes dos três analisadores implementados em
-`scanner.network_scanner.Analyser`. Os testes SSH importam o módulo desse
+`scanner.network_scanner.analyser`. Os testes SSH importam o módulo desse
 diretório, alinhado com a localização da implementação.

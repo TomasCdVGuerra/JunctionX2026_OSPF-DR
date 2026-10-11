@@ -4,9 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from scanner.models import CryptoFinding
-from scanner.network_scanner.Analyser.cleartext_analyzer import analyze_cleartext
-from scanner.network_scanner.Analyser.ssh_analyzer import analyze_ssh
-from scanner.network_scanner.Analyser.tls_analyzer import analyze_tls
+from scanner.network_scanner.analyser.cleartext_analyzer import analyze_cleartext
+from scanner.network_scanner.analyser.ssh_analyzer import analyze_ssh
+from scanner.network_scanner.analyser.tls_analyzer import analyze_tls
 from scanner.network_scanner.parser.tshark_parser import parse_network_pcap
 
 

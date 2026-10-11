@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from scanner.models import AssetType, QuantumRiskLevel
-from scanner.network_scanner.Analyser.ssh_analyzer import analyze_ssh
+from scanner.network_scanner.analyser.ssh_analyzer import analyze_ssh
 
 
 PATH = Path("captured.pcap")
@@ -214,6 +214,47 @@ def test_disjoint_algorithm_lists_keep_both_offers_advertised():
     findings = analyze_ssh(entries, PATH)
     assert len(findings) == 2
     assert {finding.observation for finding in findings} == {"advertised"}
+
+
+@pytest.mark.parametrize("field,client_name,server_name", [
+    ("kex_algorithms", "curve25519-sha256", "diffie-hellman-group14-sha256"),
+    ("server_host_key_algorithms", "ssh-ed25519", "rsa-sha2-512"),
+    ("encryption_client_to_server", "aes128-ctr", "aes256-ctr"),
+    ("encryption_server_to_client", "aes128-ctr", "aes256-ctr"),
+    ("mac_client_to_server", "hmac-sha2-256", "hmac-sha2-512"),
+    ("mac_server_to_client", "hmac-sha2-256", "hmac-sha2-512"),
+    ("kex_algorithms", "ext-info-c", "ext-info-s"),
+])
+def test_incompatible_required_list_prevents_other_common_selections(field, client_name, server_name):
+    common = {
+        "kex_algorithms": "curve25519-sha256",
+        "server_host_key_algorithms": "ssh-ed25519",
+        "encryption_client_to_server": "aes256-ctr",
+        "encryption_server_to_client": "aes256-ctr",
+        "mac_client_to_server": "hmac-sha2-256",
+        "mac_server_to_client": "hmac-sha2-256",
+    }
+    entries = [offer(**{**common, field: client_name}),
+               offer(server=True, packet=2, **{**common, field: server_name})]
+    findings = analyze_ssh(entries, PATH)
+    assert findings and all(finding.observation == "advertised" for finding in findings)
+    assert {finding.evidence[0].packet_number for finding in findings} == {1, 2}
+
+
+@pytest.mark.parametrize("cipher", ["aes256-gcm@openssh.com", "chacha20-poly1305@openssh.com"])
+@pytest.mark.parametrize("direction", ["client_to_server", "server_to_client"])
+def test_disjoint_mac_lists_do_not_prevent_aead_selection(cipher, direction):
+    field = f"mac_{direction}"
+    common = {f"encryption_{direction}": cipher, "kex_algorithms": "curve25519-sha256"}
+    findings = analyze_ssh([
+        offer(**common, **{field: "hmac-sha2-256"}),
+        offer(server=True, packet=2, **common, **{field: "hmac-sha2-512"}),
+    ], PATH)
+    selected = [finding for finding in findings if finding.observation == "negotiated"]
+    assert len(selected) == 2
+    assert all(json.loads(finding.evidence[0].matched_snippet)["ssh_field"] != field for finding in selected)
+    assert sum(finding.observation == "advertised" and finding.algorithm_name.startswith("HMAC-")
+               for finding in findings) == 2
 
 
 @pytest.mark.parametrize("cipher", ["aes128-gcm@openssh.com", "aes256-gcm@openssh.com",

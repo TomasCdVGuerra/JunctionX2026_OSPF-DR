@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scanner.models import AssetType, CryptoFinding, QuantumRiskLevel
-from scanner.network_scanner.Analyser.risk_assessment import make_finding
+from scanner.network_scanner.analyser.risk_assessment import make_finding
 
 
 def analyze_cleartext(entries: list[dict], path: Path) -> list[CryptoFinding]:

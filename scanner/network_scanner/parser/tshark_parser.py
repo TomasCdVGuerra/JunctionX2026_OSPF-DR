@@ -208,12 +208,13 @@ def extract_ssh_metadata(pcap_filepath: str) -> list[dict[str, Any]]:
 def detect_cleartext_traffic(pcap_filepath: str) -> list[dict[str, Any]]:
     """Report decoded plaintext messages, excluding TLS and upgrade preambles.
 
-    PostgreSQL SSL requests/responses and SMTP EHLO/STARTTLS do not prove
-    unencrypted application traffic, so they are excluded.
+    PostgreSQL SSL requests/responses, SMTP EHLO/STARTTLS, FTP AUTH TLS/SSL
+    and LDAP StartTLS requests do not prove unencrypted application use.
     """
     fields = _COMMON_FIELDS + [
         "http.request.method", "http.host", "http.response.code",
-        "ftp.request.command", "ftp.response.code", "telnet", "ldap.protocolOp",
+        "ftp.request.command", "ftp.request.arg", "ftp.response.code", "telnet",
+        "ldap.protocolOp", "ldap.requestName",
         "pgsql.type", "smtp.req.command", "tcp.payload",
         "tls.record.version", "frame.protocols",
     ]
@@ -238,11 +239,17 @@ def detect_cleartext_traffic(pcap_filepath: str) -> list[dict[str, Any]]:
         if method or http_status:
             protocol, snippet = "HTTP", f"HTTP {method or http_status}"
         elif ftp_command or layers.get("ftp.response.code"):
+            if (ftp_command and ftp_command.upper() == "AUTH"
+                    and _get_field_first(layers, ["ftp.request.arg"], "").strip().upper() in {"TLS", "SSL"}):
+                continue
             protocol = "FTP"
             snippet = f"FTP {ftp_command or _get_field_first(layers, ['ftp.response.code'])}"
         elif layers.get("telnet"):
             protocol, snippet = "Telnet", "Decoded Telnet traffic"
         elif layers.get("ldap.protocolOp"):
+            if (_number(_get_field_first(layers, ["ldap.protocolOp"])) == 23
+                    and _get_field_first(layers, ["ldap.requestName"]) == "1.3.6.1.4.1.1466.20037"):
+                continue
             protocol, snippet = "LDAP", "Decoded LDAP operation"
         elif pg_type and pg_type not in {"SSL request", "SSL response", "GSSENC request", "GSSENC response"}:
             protocol, snippet = "PostgreSQL", f"PostgreSQL {pg_type}"
