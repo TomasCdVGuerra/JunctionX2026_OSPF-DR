@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import dashboard
 from dashboard import (
     _build_cbom_from_findings,
@@ -1134,4 +1136,92 @@ def test_fallback_banner_renders_missing_scanner_warnings():
         fallback_warnings = [msg for msg in warning_calls if "Fallback heuristic" in msg]
         assert len(fallback_warnings) == 1
         assert "source-code (Java scanner missing)" in fallback_warnings[0]
+
+
+def test_load_findings_dataframe_type_pedantry():
+    """Petty: Verify load_findings_dataframe handles unexpected non-dict, non-list, and malformed component types."""
+    for invalid_input in [None, "", 12345, False, 3.14]:
+        df = load_findings_dataframe(invalid_input)
+        assert len(df) == 0
+        assert "Algorithm" in df.columns
+        assert "Quantum Risk" in df.columns
+        assert "Classical Risk" in df.columns
+        assert len(df.columns) == 17
+
+    # Components field is non-list or None
+    for malformed_cbom in [{"components": "not_a_list"}, {"components": None}, {"components": 999}]:
+        df = load_findings_dataframe(malformed_cbom)
+        assert len(df) == 0
+        assert len(df.columns) == 17
+
+    # Components array containing primitives, None, and empty dict
+    mixed_cbom = {"components": [None, 42, "not-a-component", True, {}]}
+    df = load_findings_dataframe(mixed_cbom)
+    # Only the empty dict should be converted to a row
+    assert len(df) == 1
+    assert len(df.columns) == 20
+    assert df.iloc[0]["Algorithm"] == "unknown"
+    assert df.iloc[0]["Quantum Risk"] == "Unknown"
+    assert df.iloc[0]["Classical Risk"] == "Unknown"
+    assert df.iloc[0]["Source Path"] == "unknown"
+
+
+def test_scan_uploaded_files_boundaries_and_error_handling():
+    """Petty: Verify scan_uploaded_files boundary conditions: empty input, unsupported files, 0-byte source, and corrupted cloud JSON."""
+    # 1. Empty input list
+    cbom, warnings = scan_uploaded_files([])
+    assert cbom is None
+    assert warnings == ["No files selected for scanning."]
+
+    # 2. Unsupported extensions
+    unsupported = [
+        MockUploadedFile("notes.txt", b"plain text"),
+        MockUploadedFile("binary.bin", b"\x00\x01\x02"),
+    ]
+    cbom, warnings = scan_uploaded_files(unsupported)
+    assert cbom is None
+    assert "Skipped unsupported file: notes.txt" in warnings
+    assert "Skipped unsupported file: binary.bin" in warnings
+
+    # 3. 0-byte source files (produce zero findings)
+    empty_src = [
+        MockUploadedFile("empty.py", b""),
+        MockUploadedFile("empty.java", b""),
+        MockUploadedFile("empty.go", b""),
+    ]
+    cbom, warnings = scan_uploaded_files(empty_src)
+    assert cbom is None
+    assert warnings == ["No cryptographic findings detected in uploaded files."]
+
+    # 4. Corrupted cloud posture JSON
+    corrupted_json = [MockUploadedFile("truncated.json", b"{\n  \"incomplete\": [")]
+    cbom, warnings = scan_uploaded_files(corrupted_json)
+    assert cbom is None
+    assert any("Error scanning cloud posture files:" in w for w in warnings)
+
+
+def test_load_findings_dataframe_missing_pandas_raises_runtime_error(monkeypatch):
+    """Petty: Ensure load_findings_dataframe raises exact RuntimeError when pandas is not available."""
+    monkeypatch.setattr(dashboard, "pd", None)
+    with pytest.raises(RuntimeError, match=r"^Pandas is required to build the findings table\.$"):
+        load_findings_dataframe({})
+
+
+def test_load_cbom_uncached_exception_contracts():
+    """Petty: Ensure _load_cbom_uncached strictly raises JSONDecodeError, UnicodeDecodeError, and FileNotFoundError."""
+    # 1. Empty bytes
+    with pytest.raises(json.JSONDecodeError):
+        _load_cbom_uncached(file_bytes=b"")
+
+    # 2. Corrupted JSON syntax
+    with pytest.raises(json.JSONDecodeError):
+        _load_cbom_uncached(file_bytes=b"{\n  \"invalid\": json\n")
+
+    # 3. Invalid UTF-8 sequence
+    with pytest.raises(UnicodeDecodeError):
+        _load_cbom_uncached(file_bytes=b"\xff\xfe\x00\x00")
+
+    # 4. Non-existent file path
+    with pytest.raises(FileNotFoundError):
+        _load_cbom_uncached(filepath="nonexistent_cbom_path_404.json")
 
