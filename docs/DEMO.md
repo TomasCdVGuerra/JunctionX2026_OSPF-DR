@@ -39,8 +39,11 @@ Estas contagens foram verificadas com o TShark instalado no PC de desenvolviment
 Outras versões de TShark podem extrair metadata diferente. As contagens são
 observações criptográficas, não sessões, recursos únicos ou uma medição de precisão.
 
-Python e Java ainda não têm implementações neste checkout; usam heurísticas
-limitadas, identificadas como fallback. Não os incluir neste cenário de referência.
+Python e Java já têm scanners reais integrados. Para alargar esta demo, carregar
+também os oito `.py` e os oito `.java` nas respetivas pastas de `sample-repos`.
+Os exemplos atuais produzem 13 findings Python e 14 Java, somando 2564 ao
+inventário conjunto. Estes scanners reconhecem APIs suportadas, sem análise
+completa de fluxo de dados; um resultado vazio não prova ausência de criptografia.
 
 ## Percurso de apresentação
 
@@ -49,12 +52,17 @@ limitadas, identificadas como fallback. Não os incluir neste cenário de refer�
 2. Explicar as duas avaliações: RSA pode ser crítico no eixo quântico sem ser
    crítico no eixo clássico. As colunas da tabela e do CSV chamam-se
    Quantum Risk e Classical Risk. Unknown significa avaliação por resolver.
+   Mostrar também Quantum Risk Score e Quantum Assessment Coverage: o score
+   mede exposição apenas entre findings avaliados; com cobertura zero aparece N/A.
+   Crypto Hygiene mede avaliação clássica e é uma métrica diferente.
 3. Selecionar Classical risk = Critical, mantendo todos os riscos quânticos:
    devem aparecer 122 findings na análise conjunta, incluindo tráfego sem encriptação.
 4. Repor todos os riscos e selecionar Observation = negotiated: a captura
    tem 609 seleções identificadas ou inferidas. Isto não prova conclusão da sessão.
 5. Mostrar referências e recomendações. Referências NIST são publicações técnicas,
    não certificação; nos híbridos, uma referência pode cobrir apenas um componente.
+   Em código, consultar Library / API. Em Java é a API identificada, não o provider
+   da implementação. O CBOM preserva esta informação e inclui cryptoProperties nativas.
 6. Confirmar que as métricas superiores mantêm o inventário completo quando os
    filtros mudam. O gráfico, tabela e CSV acompanham os filtros.
 7. Repor todos os filtros e descarregar CSV (2537 linhas) e CBOM CycloneDX 1.6.
@@ -65,12 +73,16 @@ limitadas, identificadas como fallback. Não os incluir neste cenário de refer�
 - Advertised é uma capacidade oferecida; negotiated é uma seleção; observed
   é evidência direta. Não agregar estas categorias como sessões distintas.
 - Safe aplica-se apenas aos critérios avaliados, não à segurança integral da aplicação.
-- O motor geral avalia Cloud/Go; analisadores de rede preservam decisões específicas
+- O motor geral avalia Cloud/Go/Python/Java; analisadores de rede preservam decisões específicas
   de TLS/SSH. A harmonização das políticas deve ser revista com a equipa.
 - Se TShark falhar, apresentar o erro e resolver o executable/PATH; não tratar
   a ausência de findings como prova de ausência de risco.
 
 ## Antes de integrar na main
+
+A referência manual em tests/fixtures/expected_findings.json cobre nove ficheiros
+de código e verifica deteção, localização, parâmetros e ambos os riscos.
+Não representa uma medição de precisão/recall global.
 
 Executar a suite completa, rever os ficheiros alterados e repetir os uploads
 reais. Os colegas que implementam Python/Java devem devolver `CryptoFinding`,

@@ -1,9 +1,8 @@
-import json
-import re
-import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
-
+import re
+import json
+import sys
 
 @dataclass
 class cryptoFinding:
@@ -52,6 +51,7 @@ STRING_ALGORITHM_SINKS = {
     ("Signature", "getInstance"): ("signature", 0),
     ("Cipher", "getInstance"): ("cipher", 0),
     ("KeyGenerator", "getInstance"): ("key", 0),
+    ("KeyPairGenerator", "getInstance"): ("key", 0),
     ("SecretKeyFactory", "getInstance"): ("key", 0),
 }
 
@@ -108,6 +108,7 @@ EXPECTED_PACKAGES = {
     "Cipher": ("javax.crypto",),
     "Mac": ("javax.crypto",),
     "KeyGenerator": ("javax.crypto",),
+    "KeyPairGenerator": ("java.security",),
     "SecretKeyFactory": ("javax.crypto",),
     "SecretKeySpec": ("javax.crypto.spec",),
     "DESKeySpec": ("javax.crypto.spec",),
@@ -119,9 +120,9 @@ EXPECTED_PACKAGES = {
     "Hashing": ("com.google.common.hash",),
     **{name: ("org.bouncycastle",) for name in CONSTRUCTOR_RULES if name.endswith(("Digest", "Engine")) and "KeySpec" not in name},
 }
- 
+
 SKIP_DIRS = {".git", "target", "build", "out", "node_modules", ".gradle", ".idea", ".mvn", "bin"}
- 
+
 TWO_CHAR_OPS = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "->", "::", "&&", "||", "++", "--"}
 STRING_METHODS_TRANSPARENT = {"toUpperCase", "toLowerCase", "trim", "intern", "strip"}
 
@@ -134,7 +135,7 @@ def _unescape(text: str) -> str:
         if m.group(1):
             return chr(int(m.group(1), 16))
         return _ESCAPES.get(m.group(2), m.group(2))
-    return re.sub(r"\\u+([0-9a-fA-F]{4})|\\(.)", repl, text, flags=re.DOTALL)
+    return re.sub(r"\\u+([0-9a-fA-F]{4})|\\(.)", repl, text, flags=re.S)
 
 
 def tokenize(src: str) -> tuple[list[Token], list[str]]:
@@ -143,20 +144,20 @@ def tokenize(src: str) -> tuple[list[Token], list[str]]:
     tokens: list[Token] = []
     warnings: list[str] = []
     i, n, line = 0, len(src), 1
- 
+
     while i < n:
         c = src[i]
- 
+
         if c == "\n":
             line += 1
             i += 1
         elif c in " \t\f\r":
             i += 1
- 
+
         elif src.startswith("//", i):
             j = src.find("\n", i)
             i = n if j == -1 else j
- 
+
         elif src.startswith("/*", i):
             j = src.find("*/", i + 2)
             if j == -1:
@@ -164,7 +165,7 @@ def tokenize(src: str) -> tuple[list[Token], list[str]]:
                 j = n - 2
             line += src.count("\n", i, j + 2)
             i = j + 2
- 
+
         elif src.startswith('"""', i):  # text block
             k = i + 3
             while k < n and not src.startswith('"""', k):
@@ -175,7 +176,7 @@ def tokenize(src: str) -> tuple[list[Token], list[str]]:
             tokens.append(Token("str", _unescape(src[i + 3:k]).strip(), line))
             line += src.count("\n", i, k)
             i = k + 3
- 
+
         elif c in "\"'":
             kind = "str" if c == '"' else "char"
             k = i + 1
@@ -188,21 +189,21 @@ def tokenize(src: str) -> tuple[list[Token], list[str]]:
             else:
                 tokens.append(Token(kind, _unescape(src[i + 1:k]), line))
                 i = k + 1
- 
+
         elif c.isalpha() or c in "_$":
             j = i + 1
             while j < n and (src[j].isalnum() or src[j] in "_$"):
                 j += 1
             tokens.append(Token("id", src[i:j], line))
             i = j
- 
+
         elif c.isdigit():
             j = i + 1
             while j < n and (src[j].isalnum() or src[j] in "._"):
                 j += 1
             tokens.append(Token("num", src[i:j], line))
             i = j
- 
+
         else:
             two = src[i:i + 2]
             if two in TWO_CHAR_OPS:
@@ -211,7 +212,7 @@ def tokenize(src: str) -> tuple[list[Token], list[str]]:
             else:
                 tokens.append(Token("op", c, line))
                 i += 1
- 
+
     return tokens, warnings
 
 # Classificação de nomes de algoritmos
@@ -226,18 +227,32 @@ def classify_algorithm(kind: str, value: str) -> tuple[str, str, dict[str, str]]
     (usage, algorithm, params) se for fraco, ou None."""
     s = value.strip()
     low = s.lower()
- 
+
+    if kind == "digest" and low.replace("-", "") in {"sha224", "sha256", "sha384", "sha512"}:
+        return "Hash Algorithm", s, {}
+    if kind == "key" and low in {"rsa", "ec", "ed25519", "aes"}:
+        return "Key Algorithm", s, {}
+    if kind == "mac" and low.startswith("hmac"):
+        return "MAC", s, {"hash_name": s}
+    if kind == "key" and low.startswith("pbkdf2withhmac"):
+        return "KDF", s, {"hash_name": s, "function": "kdf"}
+    if kind == "signature" and re.fullmatch(r"sha(?:1|224|256|384|512)with(?:rsa|ecdsa)", low):
+        return "Signature", s, {}
+    if kind == "cipher" and CHECKED_CIPHER.fullmatch(low.split("/")[0]):
+        parts = s.split("/")
+        return "Cipher", "AES", {"transformation": s, **({"mode": parts[1]} if len(parts) > 1 else {})}
+
     if kind == "digest":
         label = _weak_hash_label(s)
         if label:
             return HASH_USAGE, label, {"note": "Obsoleted by security standards", "hash_name": s}
- 
+
     elif kind == "mac":
         if low.startswith("hmac"):
             label = _weak_hash_label(low[4:])
             if label:
                 return HASH_USAGE, "Hmac" + label, {"note": "Obsoleted by security standards", "hash_name": s}
- 
+
     elif kind == "signature":
         m = re.match(r"^(md2|md5|sha1|sha-1)with", low)
         if m:
@@ -245,26 +260,26 @@ def classify_algorithm(kind: str, value: str) -> tuple[str, str, dict[str, str]]
                 "note": "Obsoleted by security standards",
                 "hash": _weak_hash_label(m.group(1)) or m.group(1),
             }
- 
+
     elif kind in ("cipher", "key"):
         parts = [p.strip() for p in s.split("/")]
         alg = parts[0].lower()
         mode = parts[1] if len(parts) > 1 else None
- 
+
         if _is_weak_pbe(alg):
             return CIPHER_USAGE, s, {"note": "Password-based encryption built on weak primitives"}
- 
+
         if alg in WEAK_CIPHER_NAMES:
             params = {"transformation": s} if kind == "cipher" else {"algorithm_name": s}
             if mode:
                 params["mode"] = mode
             return CIPHER_USAGE, WEAK_CIPHER_NAMES[alg], params
- 
+
         if kind == "key" and alg.startswith("pbkdf2withhmac"):
             label = _weak_hash_label(alg[len("pbkdf2withhmac"):])
             if label:
                 return HASH_USAGE, "Hmac" + label, {"note": "Obsoleted by security standards", "hash_name": s}
- 
+
         if kind == "cipher" and CHECKED_CIPHER.match(alg):
             if mode is None:
                 return CIPHER_USAGE, "AES", {
@@ -274,7 +289,7 @@ def classify_algorithm(kind: str, value: str) -> tuple[str, str, dict[str, str]]
                 }
             if mode.upper() == "ECB":
                 return CIPHER_USAGE, "AES", {"transformation": s, "mode": mode}
- 
+
     return None
 
 # Classe Visitor
@@ -289,7 +304,7 @@ class cryptoVisitor:
         self.static_imports: dict[str, str] = {}         # método -> classe qualificada
         self.static_wildcards: list[str] = []            # classes com "import static X.*"
         self.const_exprs: dict[str, list[list[Token]]] = {}
- 
+
     def visit(self, tokens: list[Token]):
         self.tokens = tokens
         self._compute_depth()
@@ -375,14 +390,14 @@ class cryptoVisitor:
         toks = [t for t in toks if not (t.kind == "op" and t.value in ("(", ")"))]
         if not toks:
             return None
- 
+
         terms: list[list[Token]] = [[]]
         for t in toks:
             if t.kind == "op" and t.value == "+":
                 terms.append([])
             else:
                 terms[-1].append(t)
- 
+
         results = [""]
         for term in terms:
             values = self._eval_term(term, depth)
@@ -416,14 +431,14 @@ class cryptoVisitor:
         if pkgs is None or fqn is None:
             return True
         return any(fqn.startswith(p + ".") for p in pkgs)
- 
+
     def _class_ok(self, parts: list[str]) -> bool:
         """parts = [..., NomeDaClasse]. Valida pelo import explícito ou pelo nome qualificado."""
         simple = parts[-1]
         if len(parts) > 1 and parts[0][:1].islower():
             return self._pkg_ok(simple, ".".join(parts))          # uso totalmente qualificado
         return self._pkg_ok(simple, self.imports.get(simple))     # import explícito (se houver)
- 
+
     def _chain_before(self, i: int) -> tuple[list[str], int, bool]:
         """Qualificadores antes do identificador em i: (partes, índice_do_início, resolvível)."""
         if not self._is_op(i - 1, "."):
@@ -441,7 +456,7 @@ class cryptoVisitor:
             else:
                 break
         return parts, start, True
- 
+
     def _args(self, open_idx: int) -> tuple[list[list[Token]], int]:
         """Argumentos da chamada cujo '(' está em open_idx. Retorna (args, índice_do_')')."""
         toks = self.tokens
@@ -475,7 +490,7 @@ class cryptoVisitor:
         for i, t in enumerate(toks):
             if t.kind != "id":
                 continue
- 
+
             if self._is_op(i + 1, "("):
                 self._handle_call(i)
             elif self._is_op(i + 1, "::") and self._is_id(i + 2):
@@ -492,26 +507,31 @@ class cryptoVisitor:
         is_new = self._is_id(start - 1, "new")
         args, _ = self._args(i + 1)
         line = toks[start - 1].line if is_new else toks[start].line
- 
+
         if is_new:
             qualified = parts + [name]
             if not self._class_ok(qualified):
                 return
+            first_finding = len(self.findings)
             if name in CONSTRUCTOR_RULES:
                 usage, label = CONSTRUCTOR_RULES[name]
                 self.add_finding(line, usage, label, {"note": "Obsoleted by security standards"})
             if name in CONSTRUCTOR_STRING_SINKS:
                 kind, pos = CONSTRUCTOR_STRING_SINKS[name]
                 self._check_string_argument(line, kind, args, pos)
+            namespace = ".".join(qualified) if parts else self.imports.get(name)
+            if namespace:
+                for finding in self.findings[first_finding:]:
+                    finding.params.setdefault("library", namespace)
             return
- 
+
         if parts:
             cls = parts[-1]
             if not self._class_ok(parts):
                 return
             self._apply_method_rules(line, cls, name, args)
             return
- 
+
         # Chamada sem qualificador: só interessa se veio de import static
         owners: list[str] = []
         if name in self.static_imports:
@@ -521,8 +541,9 @@ class cryptoVisitor:
             cls = owner.split(".")[-1]
             if self._pkg_ok(cls, owner) and self._apply_method_rules(line, cls, name, args):
                 return
- 
+
     def _apply_method_rules(self, line: int, cls: str, method: str, args: list[list[Token]]) -> bool:
+        first_finding = len(self.findings)
         hit = False
         helper = WEAK_HASH_HELPERS.get(cls, {}).get(method)
         if helper:
@@ -533,8 +554,16 @@ class cryptoVisitor:
             kind, pos = sink
             self._check_string_argument(line, kind, args, pos)
             hit = True
+        namespace = self.imports.get(cls)
+        if namespace is None and cls in {"Cipher", "Mac", "KeyGenerator", "SecretKeyFactory"}:
+            namespace = "javax.crypto." + cls
+        if namespace is None and cls in {"Signature", "MessageDigest", "KeyPairGenerator"}:
+            namespace = "java.security." + cls
+        if namespace:
+            for finding in self.findings[first_finding:]:
+                finding.params.setdefault("library", namespace)
         return hit
- 
+
     def _check_string_argument(self, line: int, kind: str, args: list[list[Token]], pos: int):
         if len(args) <= pos:
             return
@@ -548,12 +577,13 @@ class cryptoVisitor:
             if not result:
                 continue
             usage, algorithm, params = result
+            params.setdefault("function", {"digest": "digest", "mac": "mac", "signature": "sign", "key": "keygen"}.get(kind, "unknown"))
             if not is_literal:
                 params["resolved_from"] = " ".join(t.value for t in expr)
                 if len(values) > 1:
                     params["ambiguous"] = "true"
             self.add_finding(line, usage, algorithm, params)
- 
+
     def _handle_method_reference(self, i: int):
         """DigestUtils::md5Hex, MD5Digest::new ..."""
         toks = self.tokens
@@ -573,7 +603,7 @@ class cryptoVisitor:
             usage, label = CONSTRUCTOR_RULES[cls]
             self.add_finding(line, usage + " (reference)", label,
                              {"note": "Obsoleted by security standards"})
- 
+
     def _handle_constant_reference(self, i: int):
         """HmacAlgorithms.HMAC_MD5, MessageDigestAlgorithms.SHA_1 ..."""
         toks = self.tokens
@@ -594,7 +624,7 @@ class cryptoVisitor:
             evidence_line = self.source_lines[line_number - 1].strip()
         else:
             evidence_line = ""
- 
+
         finding = cryptoFinding(
             filename = self.filename,
             line = line_number,
@@ -603,11 +633,11 @@ class cryptoVisitor:
             params = params,
             evidence = evidence_line,
         )
- 
+
         self.findings.append(finding)
-     
+
 #------------------------- Leitura de Arquivos -------------------------------------
-def scan_file(file_path: str) -> list[cryptoFinding]:
+def scan_file(file_path: str, *, strict: bool = False) -> list[cryptoFinding]:
     path = Path(file_path)
     if not path.exists():
         print(f"Erro: O arquivo {file_path} não foi encontrado.")
@@ -615,38 +645,53 @@ def scan_file(file_path: str) -> list[cryptoFinding]:
     if not path.is_file():
         print(f"Erro: {file_path} não é um arquivo.")
         return []
- 
+
     try:
         raw = path.read_bytes()
     except OSError as e:
+        if strict:
+            raise ValueError(f"Cannot read Java source {file_path}: {e}") from e
         print(f"Erro ao ler {file_path}: {e}")
         return []
- 
+
     try:
         source_code = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         # Muito código Java legado está em ISO-8859-1; os identificadores de API são ASCII
         source_code = raw.decode("latin-1")
         print(f"Aviso: {file_path} não é UTF-8 válido; lido como ISO-8859-1.")
- 
+
     if "\x00" in source_code:
+        if strict:
+            raise ValueError(f"Cannot parse Java source {file_path}: contains null bytes")
         print(f"Erro: {file_path} parece ser binário (contém byte nulo).")
         return []
- 
+
     # Java trata \n, \r\n e \r como quebra de linha
     source_code = source_code.replace("\r\n", "\n").replace("\r", "\n")
     source_lines = source_code.split("\n")
- 
+
     tokens, warnings = tokenize(source_code)
+    if strict and warnings:
+        raise ValueError(f"Cannot reliably tokenize Java source {file_path}: {'; '.join(warnings)}")
     for w in warnings:
         print(f"Aviso em {file_path}: {w}. O resultado pode estar incompleto.")
- 
+
     visitor = cryptoVisitor(filename=file_path, source_lines=source_lines)
     visitor.visit(tokens)
- 
+    from scanner.java_context import attach_java_context
+    attach_java_context(visitor)
+
     return visitor.findings
- 
- 
+
+
+def scan_java_file(file_path: str | Path, base_dir: str | Path | None = None):
+    """Shared scanner interface; risk assessment is performed downstream."""
+    from scanner.source_adapter import adapt_source_finding
+    return [adapt_source_finding(raw, "java", Path(base_dir) if base_dir else None)
+            for raw in scan_file(str(file_path), strict=True)]
+
+
 def collect_java_files(target: str) -> list[str]:
     path = Path(target)
     if path.is_dir():
@@ -655,22 +700,22 @@ def collect_java_files(target: str) -> list[str]:
             if not any(part in SKIP_DIRS for part in p.parts)
         )
     return [target]
- 
- 
+
+
 if __name__ == "__main__":
     targets = sys.argv[1:] or ["."]
     files = [f for t in targets for f in collect_java_files(t)]
- 
+
     print(f"Iniciando varredura de {len(files)} arquivo(s): {', '.join(targets)} ...\n")
- 
+
     results: list[cryptoFinding] = []
     for file in files:
         results.extend(scan_file(file))
- 
+
     if results:
         print(f"Sucesso! Foram encontrados {len(results)} registro criptográfico(s) suspeito(s):\n")
         print(json.dumps([asdict(f) for f in results], indent=4, ensure_ascii=False))
- 
+
     else:
         print("Nenhum registro criptográfico suspeito foi encontrado.")
- 
+

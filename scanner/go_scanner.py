@@ -785,6 +785,14 @@ def scan_go_file(
                 )],
             ))
 
+    for finding in findings:
+        snippet = finding.evidence[0].matched_snippet or ""
+        package = next((package for package in
+                        ("hmac", "rsa", "ecdsa", "ed25519", "aes", "des", "md5", "sha1", "sha256", "sha512")
+                        if re.search(r"\b" + package + r"\.", snippet)
+                        and '"crypto/' + package + '"' in source_text), None)
+        if package:
+            finding.library = "crypto/" + package
     return findings
 
 

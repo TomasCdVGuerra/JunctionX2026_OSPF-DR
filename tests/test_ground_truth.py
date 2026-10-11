@@ -21,14 +21,27 @@ from scanner.report import (
 )
 from scanner.risk import enrich_finding, enrich_findings
 
-EXPECTED_FINDINGS_PATH = Path("tests/fixtures/expected_findings.json")
+EXPECTED_FINDINGS_PATH = Path(__file__).parent / "fixtures/expected_findings.json"
 
 
 def load_expected_findings() -> dict[str, Any]:
     """Load hand-checked expected findings fixture."""
-    if EXPECTED_FINDINGS_PATH.exists():
-        return json.loads(EXPECTED_FINDINGS_PATH.read_text(encoding="utf-8"))
-    return {}
+    return json.loads(EXPECTED_FINDINGS_PATH.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", load_expected_findings()["cases"], ids=lambda case: case["file"])
+def test_reviewed_source_inventory(case):
+    """Compare discovery and both risk axes with a manually explained oracle."""
+    from collections import Counter
+    from scanner.source_scanner import scan_file
+
+    base = Path(__file__).resolve().parents[1] / "support-materials/sample-repos"
+    findings = [enrich_finding_risk(f) for f in scan_file(base / case["file"], base_dir=base)]
+    actual = Counter((f.evidence[0].line_number, f.algorithm_name, f.crypto_function.value,
+                      f.key_size, f.mode, f.quantum_risk.value, f.classical_risk.value)
+                     for f in findings)
+    expected = Counter(tuple(row) for row in case["expected"])
+    assert actual == expected, {"reason": case["reason"], "missing": expected - actual, "unexpected": actual - expected}
 
 
 def _create_mock_finding(

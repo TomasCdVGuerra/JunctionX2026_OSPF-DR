@@ -1075,22 +1075,30 @@ def test_grouping_matches_scanner_report_helpers():
     assert summary["by_algorithm"]["AES-256-GCM"] == 1
 
 
-def test_missing_java_scanner_warning_in_uploaded_files():
+def test_missing_java_scanner_warning_in_uploaded_files(monkeypatch):
     """Verify uploading .java files without a functional java scanner appends a warning."""
+    import scanner.java_scanner as java
+    monkeypatch.delattr(java, "scan_java_file")
     files = [MockUploadedFile("Service.java", "KeyPairGenerator.getInstance(\"RSA\");")]
     _cbom, warnings = scan_uploaded_files(files)
     assert "source-code (Java scanner missing)" in warnings
 
 
-def test_missing_python_scanner_warning_in_uploaded_files():
+def test_missing_python_scanner_warning_in_uploaded_files(monkeypatch):
     """Verify uploading .py files without a functional python scanner appends a warning."""
+    import scanner.python_scanner as python
+    monkeypatch.delattr(python, "scan_python_file")
     files = [MockUploadedFile("app.py", "import hashlib\nhashlib.sha1(b'x')")]
     _cbom, warnings = scan_uploaded_files(files)
     assert "source-code (Python scanner missing)" in warnings
 
 
-def test_missing_scanner_warnings_in_bundled_data():
+def test_missing_scanner_warnings_in_bundled_data(monkeypatch):
     """Verify scanning bundled data appends warnings when Java/Python scanners are unavailable."""
+    import scanner.java_scanner as java
+    import scanner.python_scanner as python
+    monkeypatch.delattr(java, "scan_java_file")
+    monkeypatch.delattr(python, "scan_python_file")
     _cbom, warnings = dashboard.scan_bundled_data()
     assert "source-code (Java scanner missing)" in warnings
     assert "source-code (Python scanner missing)" in warnings

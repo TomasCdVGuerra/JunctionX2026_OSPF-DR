@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -315,7 +316,7 @@ class CBOMSerializer:
             ],
         }
 
-        for field in ("classical_risk", "recommendation", "observation", "confidence", "key_size", "mode"):
+        for field in ("classical_risk", "recommendation", "observation", "confidence", "key_size", "mode", "library"):
             value = self._get_attribute(finding, field, default=None)
             if value is not None:
                 component["properties"].append({
@@ -334,7 +335,55 @@ class CBOMSerializer:
                 "name": "cryptotrace:evidence",
                 "value": json.dumps(serialized_evidence, ensure_ascii=False),
             })
+        component["cryptoProperties"] = self._native_crypto_properties(finding)
         self.document["components"].append(component)
+
+    @classmethod
+    def _native_crypto_properties(cls, finding: Any) -> dict[str, Any]:
+        """Export observed metadata into native schema fields without assessing risk."""
+        asset = cls._get_attribute(finding, "asset_type", default="algorithm")
+        asset = getattr(asset, "value", asset)
+        # CycloneDX models keys as related cryptographic material.
+        asset = "related-crypto-material" if asset == "key" else asset
+        if asset not in {"algorithm", "protocol", "certificate", "related-crypto-material"}:
+            asset = "algorithm"
+        result: dict[str, Any] = {"assetType": asset}
+        size = cls._get_attribute(finding, "key_size", default=None)
+        if asset == "related-crypto-material":
+            material: dict[str, Any] = {}
+            if cls._get_attribute(finding, "asset_type", default=None) in {"key"}:
+                material["type"] = "key"
+            if type(size) is int and size > 0:
+                material["size"] = size
+            if material:
+                result["relatedCryptoMaterialProperties"] = material
+        elif asset == "algorithm":
+            algorithm: dict[str, Any] = {}
+            function = cls._finding_value(finding, "operation", default=None)
+            function = getattr(function, "value", function)
+            function = {"mac": "tag", "kdf": "keyderive", "key_exchange": "other"}.get(function, function)
+            if function in {"keygen", "encrypt", "decrypt", "digest", "tag", "keyderive", "sign", "verify", "unknown", "other"}:
+                algorithm["cryptoFunctions"] = [function]
+            mode = cls._get_attribute(finding, "mode", default=None)
+            if isinstance(mode, str) and mode.lower() in {"cbc", "ecb", "ccm", "gcm", "cfb", "ofb", "ctr"}:
+                algorithm["mode"] = mode.lower()
+            if type(size) is int and size > 0:
+                algorithm["parameterSetIdentifier"] = str(size)
+            if algorithm:
+                result["algorithmProperties"] = algorithm
+        elif asset == "protocol":
+            name = cls._finding_value(finding, "canonical_algorithm", default="")
+            version = re.fullmatch(r"TLS[- ]?(1\.[0-3])", str(name), re.IGNORECASE)
+            protocol = cls._get_attribute(finding, "protocol", default=None)
+            kind = "tls" if version else str(protocol or name).lower()
+            if kind in {"tls", "ssh", "ipsec", "ike", "sstp", "wpa"}:
+                result["protocolProperties"] = {"type": kind}
+                if version:
+                    result["protocolProperties"]["version"] = version[1]
+        oid = cls._get_attribute(finding, "oid", default=None)
+        if isinstance(oid, str) and oid:
+            result["oid"] = oid
+        return result
 
     def to_json(self, filepath: str | Path | None = None) -> str:
         """Serialize the CBOM and optionally write it to disk."""

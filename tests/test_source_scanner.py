@@ -132,15 +132,19 @@ def test_source_scanner_custom_rules_propagation(tmp_path: Path):
     assert findings[0].evidence[0].rule_id == "CUSTOM-GO-TEST"
 
 
-def test_python_scanner_graceful_when_unimplemented(tmp_path: Path):
+def test_python_scanner_graceful_when_unimplemented(tmp_path: Path, monkeypatch):
     """Petty: When python_scanner has no scan_python_file, scan_file returns [] without crashing."""
+    import scanner.python_scanner as python
+    monkeypatch.delattr(python, "scan_python_file")
     py_file = tmp_path / "script.py"
     py_file.write_text("import hashlib\nhashlib.md5()")
     assert scan_file(py_file, base_dir=tmp_path) == []
 
 
-def test_java_scanner_graceful_when_unimplemented(tmp_path: Path):
+def test_java_scanner_graceful_when_unimplemented(tmp_path: Path, monkeypatch):
     """Petty: When java_scanner has no scan_java_file, scan_file returns [] without crashing."""
+    import scanner.java_scanner as java
+    monkeypatch.delattr(java, "scan_java_file")
     java_file = tmp_path / "App.java"
     java_file.write_text('MessageDigest.getInstance("MD5");')
     assert scan_file(java_file, base_dir=tmp_path) == []
@@ -251,9 +255,13 @@ def test_source_pattern_rule_dataclass_contract():
     assert rule.asset_type == AssetType.ALGORITHM
 
 
-def test_python_and_java_scanner_unavailable_logs_warning(tmp_path: Path, caplog):
+def test_python_and_java_scanner_unavailable_logs_warning(tmp_path: Path, caplog, monkeypatch):
     """Regression: Unavailable python/java scanners log warnings visibly instead of silently failing."""
     import logging
+    import scanner.python_scanner as python
+    import scanner.java_scanner as java
+    monkeypatch.delattr(python, "scan_python_file")
+    monkeypatch.delattr(java, "scan_java_file")
     with caplog.at_level(logging.WARNING):
         py_file = tmp_path / "script.py"
         py_file.write_text("import hashlib\n")

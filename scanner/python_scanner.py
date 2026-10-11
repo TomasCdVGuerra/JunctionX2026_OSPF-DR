@@ -1,11 +1,10 @@
-import ast
+from dataclasses import dataclass, asdict
+from pathlib import Path
 import json
+import ast
 import re
 import sys
 import tokenize
-from dataclasses import asdict, dataclass
-from pathlib import Path
-
 
 @dataclass
 class cryptoFinding:
@@ -28,6 +27,10 @@ WEAK_HASHES = {
 }
 
 WEAK_HASH_NAMES = {"md2": "MD2", "md4": "MD4", "md5": "MD5", "sha1": "SHA1"}
+for _hash in ("sha224", "sha256", "sha384", "sha512"):
+    WEAK_HASHES[f"hashlib.{_hash}"] = _hash.upper()
+    WEAK_HASHES[f"hashes.SHA{_hash[3:]}"] = _hash.upper()
+    WEAK_HASH_NAMES[_hash] = _hash.upper()
 
 HASH_NAME_ARG_FUNCS = {
     "hashlib.new": (0, "name"),
@@ -77,9 +80,11 @@ class cryptoVisitor(ast.NodeVisitor):
         self.start_modules: list[str] = []
         self.mode_vars: dict[str, str] = {}
         self._call_funcs: set[int] = set()
+        self._consumed_calls: set[int] = set()
+        self._hash_context: dict[int, str] = {}
 
 #---------------------------------------------- classe de imports
-    def visit_module(self, node: ast.Module):
+    def visit_Module(self, node: ast.Module):
         for n in ast.walk(node):
             if isinstance(n, ast.Import):
                 for a in n.names:
@@ -139,6 +144,16 @@ class cryptoVisitor(ast.NodeVisitor):
             self._track_assign(node.targets, node.value)
         self.generic_visit(node)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        saved = self.mode_vars.copy()
+        for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+            self.mode_vars.pop(arg.arg, None)
+        for statement in node.body:
+            self.visit(statement)
+        self.mode_vars = saved
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
     def _find_mode(self, node: ast.Call):
         """Retorna (texto, texto_resolvido, é_ECB) ou None se não há modo explícito."""
         expr = None
@@ -171,25 +186,105 @@ class cryptoVisitor(ast.NodeVisitor):
 #----------------------------------------------------------------------- classe de chamada
 # orquestrador principal de chamadas de função
     def visit_Call(self, node: ast.Call):
+        if id(node) in self._consumed_calls:
+            self.generic_visit(node)
+            return
         self._call_funcs.add(id(node.func))
         candidates = self._candidates(node.func)
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {"sign", "verify"}:
+            if any(isinstance(arg, ast.Call) and any(c.endswith(("padding.PKCS1v15", "padding.PSS")) for c in self._candidates(arg.func)) for arg in node.args):
+                for arg in node.args:
+                    if isinstance(arg, ast.Call) and self._match(self._candidates(arg.func), WEAK_HASHES):
+                        self._hash_context[id(arg)] = node.func.attr
+
+        if self._check_construction(node, candidates):
+            self.generic_visit(node)
+            return
  
         self._check_weak_hash_call(node, candidates)
         self._check_hash_name_argument(node, candidates)
-        self._check_cipher(node, candidates)
+        if not self._check_inventory(node, candidates):
+            self._check_cipher(node, candidates)
  
         self.generic_visit(node)
+
+    def _literal(self, node):
+        for _ in range(5):
+            if isinstance(node, ast.Name) and node.id in self.mode_vars:
+                try:
+                    node = ast.parse(self.mode_vars[node.id], mode="eval").body
+                except SyntaxError:
+                    return None
+            else:
+                break
+        return node.value if isinstance(node, ast.Constant) else None
+
+    def _check_construction(self, node, candidates):
+        """Keep explicit composite APIs together instead of unrelated children."""
+        if _suffix_match_any(candidates, "PBKDF2HMAC"):
+            values = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            digest_node = values.get("algorithm")
+            digest = self._match(self._candidates(digest_node.func), WEAK_HASHES) if isinstance(digest_node, ast.Call) else None
+            name = "PBKDF2-HMAC-" + digest if digest else "PBKDF2"
+            params = {"function": "kdf"}
+            details = {key: self._literal(values.get(key)) for key in ("length", "iterations")}
+            params["note"] = "PBKDF2 source parameters (not password entropy): " + json.dumps(details)
+            self.add_finding(node, "KDF", name, params)
+            if isinstance(digest_node, ast.Call):
+                self._consumed_calls.add(id(digest_node))
+                self._call_funcs.add(id(digest_node.func))
+            return True
+        constructor = node
+        operation = "unknown"
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
+            if node.func.attr in {"encrypt", "decrypt"}:
+                constructor, operation = node.func.value, node.func.attr
+        names = self._candidates(constructor.func)
+        key = None
+        mode = None
+        children = []
+        if _suffix_match_any(names, "AESGCM"):
+            key = constructor.args[0] if constructor.args else next((kw.value for kw in constructor.keywords if kw.arg == "key"), None)
+            mode = "GCM"
+            if constructor is not node:
+                children.append(constructor)
+        elif _suffix_match_any(names, "Cipher") and constructor.args:
+            cipher = constructor.args[0]
+            if not isinstance(cipher, ast.Call) or not _suffix_match_any(self._candidates(cipher.func), "algorithms.AES"):
+                return False
+            key = cipher.args[0] if cipher.args else None
+            mode_node = constructor.args[1] if len(constructor.args) > 1 else next((kw.value for kw in constructor.keywords if kw.arg == "mode"), None)
+            if isinstance(mode_node, ast.Call):
+                for candidate in self._candidates(mode_node.func):
+                    for known in ("ECB", "CBC", "GCM", "CCM", "CTR", "CFB", "OFB"):
+                        if candidate.endswith("modes." + known):
+                            mode = known
+                children.append(mode_node)
+            children.append(cipher)
+        else:
+            return False
+        params = {"function": operation}
+        if mode:
+            params["mode"] = mode
+        literal = self._literal(key)
+        if isinstance(literal, bytes) and literal:
+            params["key_size"] = str(len(literal) * 8)
+        self.add_finding(node, "Cipher construction", "AES", params)
+        for child in children:
+            self._consumed_calls.add(id(child))
+            self._call_funcs.add(id(child.func))
+        return True
 
 # Verifica funções de hash diretas (ex: md5(), sha1())
     def _check_weak_hash_call(self, node: ast.Call, candidates: list[str]):
         label = self._match(candidates, WEAK_HASHES)
         if not label:
             return
-        params = {"note": "Obsoleted by security standards"}
+        params = {"function": self._hash_context.get(id(node), "digest" if any(c.startswith("hashlib.") for c in candidates) else "unknown")}
         for kw in node.keywords:
             if kw.arg == "usedforsecurity" and ast.unparse(kw.value) == "False":
                 params["usedforsecurity"] = "False"
-                params["note"] += " (usedforsecurity=False: possible non-security use, review manually)"
+                params["note"] = "usedforsecurity=False: possible non-security use, review manually"
         self.add_finding(
             node = node,
             usage = "Weak Hash Algorithm",
@@ -211,15 +306,65 @@ class cryptoVisitor(ast.NodeVisitor):
             if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
                 key = expr.value.lower().replace("-", "").replace("_", "")
                 if key in WEAK_HASH_NAMES:
+                    digest = WEAK_HASH_NAMES[key]
+                    operation = "digest"
+                    if suffix.startswith("hmac."):
+                        digest, operation = "HMAC-" + digest, "mac"
+                    elif suffix == "hashlib.pbkdf2_hmac":
+                        digest, operation = "PBKDF2-HMAC-" + digest, "kdf"
                     self.add_finding(
                         node = node,
                         usage = "Weak Hash Algorithm",
-                        algorithm = WEAK_HASH_NAMES[key],
+                        algorithm = digest,
                         params = {
-                            "note": "Obsoleted by security standards",
+                            "function": operation,
                             "hash_name": expr.value,
                         }
                     )
+            elif expr is not None and suffix.startswith("hmac."):
+                digest = self._match(self._candidates(expr), WEAK_HASHES)
+                if digest:
+                    self._call_funcs.add(id(expr))
+                    self.add_finding(node, "MAC", "HMAC-" + digest, {"function": "mac"})
+
+    def _check_inventory(self, node: ast.Call, candidates: list[str]) -> bool:
+        """Inventory explicit key/cipher APIs in addition to weak primitives."""
+        parameters = {}
+        name = None
+        operation = "unknown"
+        if _suffix_match_any(candidates, "rsa.generate_private_key"):
+            name, operation = "RSA", "keygen"
+            value = next((kw.value for kw in node.keywords if kw.arg == "key_size"), None)
+            if value is None and len(node.args) > 1:
+                value = node.args[1]
+            if isinstance(value, ast.Name) and value.id in self.mode_vars:
+                try:
+                    value = ast.parse(self.mode_vars[value.id], mode="eval").body
+                except SyntaxError:
+                    value = None
+            if isinstance(value, ast.Constant) and type(value.value) is int and value.value > 0:
+                parameters["key_size"] = str(value.value)
+        elif any(_suffix_match_any(candidates, suffix) for suffix in ("Ed25519PrivateKey.generate", "ed25519.Ed25519PrivateKey.generate")):
+            name, operation = "Ed25519", "keygen"
+        elif _suffix_match_any(candidates, "AES.new") or _suffix_match_any(candidates, "algorithms.AES"):
+            name = "AES"
+            key = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "key"), None)
+            if isinstance(key, ast.Name) and key.id in self.mode_vars:
+                try:
+                    key = ast.parse(self.mode_vars[key.id], mode="eval").body
+                except SyntaxError:
+                    key = None
+            if isinstance(key, ast.Constant) and isinstance(key.value, bytes) and key.value:
+                parameters["key_size"] = str(len(key.value) * 8)
+            if _suffix_match_any(candidates, "AES.new"):
+                mode = self._find_mode(node)
+                if mode:
+                    parameters["mode_resolved"] = mode[1]
+        if name is None:
+            return False
+        parameters["function"] = operation
+        self.add_finding(node, "Cryptographic primitive", name, parameters)
+        return True
 
 # Verifica cifras de criptografia e modos inseguros (ex: DES, AES em ECB)
     def _check_cipher(self, node: ast.Call, candidates: list[str]):
@@ -305,7 +450,16 @@ class cryptoVisitor(ast.NodeVisitor):
         
 #---------------------------------------------------------------------------------------- registro
     def add_finding(self, node: ast.AST, usage: str, algorithm: str, params: dict[str, str]):
-        line_number = getattr(node, "lineno", 0)
+        # Record a resolved API namespace, not an assumed implementation/version.
+        for item in ast.walk(node):
+            target = item.func if isinstance(item, ast.Call) else item
+            roots = [name.split(".")[0] for name in self._candidates(target)]
+            root = next((root for root in roots if root in
+                         {"hashlib", "hmac", "cryptography", "Crypto", "Cryptodome"}), None)
+            if root:
+                params.setdefault("library", root)
+                break
+        line_number = node.lineno
         if 1 <= line_number <= len(self.source_lines):
             evidence_line = self.source_lines[line_number - 1].strip()
         else:
@@ -326,7 +480,7 @@ class cryptoVisitor(ast.NodeVisitor):
 def _suffix_match_any(candidates: list[str], suffix: str) -> bool:
     return any(c == suffix or c.endswith("." + suffix) for c in candidates)
 
-def scan_file(file_path: str) -> list[cryptoFinding]:
+def scan_file(file_path: str, *, strict: bool = False) -> list[cryptoFinding]:
     path = Path(file_path)
     if not path.exists():
         print(f"Erro: O arquivo {file_path} não foi encontrado.")
@@ -340,6 +494,8 @@ def scan_file(file_path: str) -> list[cryptoFinding]:
         with tokenize.open(path) as f:
             source_code = f.read()
     except (OSError, UnicodeDecodeError, SyntaxError) as e:
+        if strict:
+            raise ValueError(f"Cannot read Python source {file_path}: {e}") from e
         print(f"Erro ao ler {file_path}: {e}")
         return []
  
@@ -350,6 +506,8 @@ def scan_file(file_path: str) -> list[cryptoFinding]:
     try:
         tree = ast.parse(source_code, filename=file_path)
     except (SyntaxError, ValueError, RecursionError) as e:
+        if strict:
+            raise ValueError(f"Cannot parse Python source {file_path}: {e}") from e
         print(f"Erro de sintaxe em {file_path}: {e}")
         return []
  
@@ -357,6 +515,13 @@ def scan_file(file_path: str) -> list[cryptoFinding]:
     visitor.visit(tree)
  
     return visitor.findings
+
+def scan_python_file(file_path: str | Path, base_dir: str | Path | None = None):
+    """Shared scanner interface; risk assessment is performed downstream."""
+    from scanner.source_adapter import adapt_source_finding
+    return [adapt_source_finding(raw, "python", Path(base_dir) if base_dir else None)
+            for raw in scan_file(str(file_path), strict=True)]
+
 
 def collect_python_files(target: str) -> list[str]:
     path = Path(target)
