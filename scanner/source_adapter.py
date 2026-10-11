@@ -1,6 +1,7 @@
 """Convert source detector observations without guessing parameters or risk."""
 import re
 from pathlib import Path
+
 from scanner.algorithms import normalise
 from scanner.models import CryptoFinding, CryptoFunction, Evidence
 

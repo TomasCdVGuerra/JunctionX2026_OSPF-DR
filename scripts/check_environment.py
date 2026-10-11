@@ -11,19 +11,22 @@ def main() -> int:
         return 1
     print(f"Python {sys.version.split()[0]}: OK")
     try:
+        import cryptography
+        import jsonschema
         import pandas
         import plotly
-        import streamlit
-        import jsonschema
-        import pytest
-        import cryptography
-        import rich
         import pydantic
+        import pytest
+        import rich
+        import streamlit
     except ImportError as exc:
         print(f"Missing dependency: {exc}. Run python -m pip install -r requirements.txt")
         return 1
     print("Dashboard, models and test dependencies: OK")
-    from scanner.network_scanner.parser.tshark_parser import find_tshark_binary, PcapParserError
+    from scanner.network_scanner.parser.tshark_parser import (
+        PcapParserError,
+        find_tshark_binary,
+    )
     try:
         print(f"TShark: {find_tshark_binary()}")
     except PcapParserError as exc:

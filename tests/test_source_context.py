@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from scanner.source_scanner import scan_file
 from scanner.risk import enrich_finding
+from scanner.source_scanner import scan_file
 
 
 @pytest.mark.parametrize("source,name,mode,operation,size", [

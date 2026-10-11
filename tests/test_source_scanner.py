@@ -258,8 +258,9 @@ def test_source_pattern_rule_dataclass_contract():
 def test_python_and_java_scanner_unavailable_logs_warning(tmp_path: Path, caplog, monkeypatch):
     """Regression: Unavailable python/java scanners log warnings visibly instead of silently failing."""
     import logging
-    import scanner.python_scanner as python
+
     import scanner.java_scanner as java
+    import scanner.python_scanner as python
     monkeypatch.delattr(python, "scan_python_file")
     monkeypatch.delattr(java, "scan_java_file")
     with caplog.at_level(logging.WARNING):

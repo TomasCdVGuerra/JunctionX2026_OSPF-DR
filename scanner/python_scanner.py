@@ -1,10 +1,11 @@
-from dataclasses import dataclass, asdict
-from pathlib import Path
-import json
 import ast
+import json
 import re
 import sys
 import tokenize
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
 
 @dataclass
 class cryptoFinding:
@@ -152,7 +153,8 @@ class cryptoVisitor(ast.NodeVisitor):
             self.visit(statement)
         self.mode_vars = saved
 
-    visit_AsyncFunctionDef = visit_FunctionDef
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        self.visit_FunctionDef(node)  # type: ignore[arg-type]
 
     def _find_mode(self, node: ast.Call):
         """Retorna (texto, texto_resolvido, é_ECB) ou None se não há modo explícito."""
@@ -322,10 +324,10 @@ class cryptoVisitor(ast.NodeVisitor):
                         }
                     )
             elif expr is not None and suffix.startswith("hmac."):
-                digest = self._match(self._candidates(expr), WEAK_HASHES)
-                if digest:
+                matched_digest = self._match(self._candidates(expr), WEAK_HASHES)
+                if matched_digest:
                     self._call_funcs.add(id(expr))
-                    self.add_finding(node, "MAC", "HMAC-" + digest, {"function": "mac"})
+                    self.add_finding(node, "MAC", "HMAC-" + matched_digest, {"function": "mac"})
 
     def _check_inventory(self, node: ast.Call, candidates: list[str]) -> bool:
         """Inventory explicit key/cipher APIs in addition to weak primitives."""
@@ -459,7 +461,7 @@ class cryptoVisitor(ast.NodeVisitor):
             if root:
                 params.setdefault("library", root)
                 break
-        line_number = node.lineno
+        line_number = getattr(node, "lineno", 0)
         if 1 <= line_number <= len(self.source_lines):
             evidence_line = self.source_lines[line_number - 1].strip()
         else:
