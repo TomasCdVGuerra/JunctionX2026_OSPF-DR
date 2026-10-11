@@ -1,9 +1,15 @@
-import pytest
-
-from scanner.algorithms import normalise, parse_signature_algorithm, parse_tls13_cipher_suite, parse_legacy_cipher_suite
-
 import json
 from pathlib import Path
+
+import pytest
+
+from scanner.algorithms import (
+    normalise,
+    parse_legacy_cipher_suite,
+    parse_signature_algorithm,
+    parse_tls13_cipher_suite,
+)
+
 
 @pytest.mark.parametrize(
     "raw_name, expected",

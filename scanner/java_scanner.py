@@ -1,7 +1,9 @@
-from dataclasses import dataclass, asdict
-from pathlib import Path
-import re
 import json
+import re
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
 
 @dataclass
 class cryptoFinding:
@@ -132,7 +134,7 @@ def _unescape(text: str) -> str:
         if m.group(1):
             return chr(int(m.group(1), 16))
         return _ESCAPES.get(m.group(2), m.group(2))
-    return re.sub(r"\\u+([0-9a-fA-F]{4})|\\(.)", repl, text, flags=re.S)
+    return re.sub(r"\\u+([0-9a-fA-F]{4})|\\(.)", repl, text, flags=re.DOTALL)
 
 
 def tokenize(src: str) -> tuple[list[Token], list[str]]:

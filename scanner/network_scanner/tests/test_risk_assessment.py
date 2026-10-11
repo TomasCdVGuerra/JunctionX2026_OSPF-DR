@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction as F, Evidence, QuantumRiskLevel as Q
+from scanner.models import AssetType, CryptoFinding, Evidence
+from scanner.models import CryptoFunction as F
+from scanner.models import QuantumRiskLevel as Q
 from scanner.network_scanner.analyser import risk_assessment as risk
 
 

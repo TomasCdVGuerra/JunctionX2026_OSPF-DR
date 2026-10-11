@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+from scanner.models import (
+    AssetType,
+    CryptoFinding,
+    CryptoFunction,
+    Evidence,
+    QuantumRiskLevel,
+)
 from scanner.risk import (
     RISK_ASSESSMENT_RULE_ID,
     enrich_finding,

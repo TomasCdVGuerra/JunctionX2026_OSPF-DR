@@ -4,7 +4,12 @@ from pathlib import Path
 
 import jsonschema
 
-from dashboard import RISK_ORDER, _build_cbom_from_findings, load_findings_dataframe, scan_uploaded_files
+from dashboard import (
+    RISK_ORDER,
+    _build_cbom_from_findings,
+    load_findings_dataframe,
+    scan_uploaded_files,
+)
 from scanner.cbom import CBOMSerializer
 from scanner.cloud_scanner import scan
 from scanner.models import CryptoFinding, Evidence

@@ -13,14 +13,13 @@ from scanner.network_scanner.algorithm_mapper import SSH_CIPHERS, SSH_FIELDS
 from scanner.network_scanner.analyser.risk_assessment import enrich_finding
 from scanner.network_scanner.model_adapter import findings_from_metadata
 
-
 _UNKNOWN_SSH_ALGORITHM = (
     QuantumRiskLevel.UNKNOWN,
     QuantumRiskLevel.UNKNOWN,
-    "The SSH wire algorithm has no verified mapping for this negotiation "
-    "field; quantum and classical risk remain unknown.",
-    "Resolve the SSH wire identifier and review its cryptographic "
-    "parameters before assessing risk.",
+    ("The SSH wire algorithm has no verified mapping for this negotiation "
+    "field; quantum and classical risk remain unknown."),
+    ("Resolve the SSH wire identifier and review its cryptographic "
+    "parameters before assessing risk."),
 )
 
 
@@ -80,7 +79,7 @@ def analyze_ssh(entries: list[dict], path: Path) -> list[CryptoFinding]:
         offered: dict[str, dict[str, CryptoFinding]] = {}
         for finding in observations:
             if finding.observation == "advertised":
-                context = json.loads(finding.evidence[0].matched_snippet)
+                context = json.loads(finding.evidence[0].matched_snippet or "{}")
                 field, name = context["ssh_field"], context["ssh_algorithm"]
                 # A wire name resembling a canonical primitive is still
                 # unknown unless this SSH field has an exact verified mapping.
@@ -149,7 +148,7 @@ def analyze_ssh(entries: list[dict], path: Path) -> list[CryptoFinding]:
                 for evidence in server_algorithms[field][name].evidence
             )
             for evidence in selected.evidence:
-                evidence.risk_reasoning += (
+                evidence.risk_reasoning = (evidence.risk_reasoning or "") + (
                     " Selection is inferred from both SSH offers using client "
                     "preference; completion is not established."
                 )

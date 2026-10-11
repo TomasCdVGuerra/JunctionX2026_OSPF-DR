@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-import json
 import importlib
+import json
 import logging
-import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-from scanner.models import CryptoFinding
+
 from scanner.dashboard_fallbacks import (
-    scan_source_file as _scan_source_file_fallback,
     scan_cloud_file as _scan_cloud_file_fallback,
+)
+from scanner.dashboard_fallbacks import (
     scan_pcap_file as _scan_pcap_file_fallback,
 )
-from scanner.risk import enrich_finding
+from scanner.dashboard_fallbacks import (
+    scan_source_file as _scan_source_file_fallback,
+)
+from scanner.models import CryptoFinding
 from scanner.nist_references import collect_nist_references
+from scanner.risk import enrich_finding
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,11 @@ except ImportError:  # pragma: no cover
     pcap_scanner = None  # type: ignore[assignment]
 
 try:
-    from scanner.report import build_report_summary, calculate_hygiene_score, calculate_posture_status
+    from scanner.report import (
+        build_report_summary,
+        calculate_hygiene_score,
+        calculate_posture_status,
+    )
 except ImportError:  # pragma: no cover
     calculate_hygiene_score = None  # type: ignore[assignment]
     calculate_posture_status = None  # type: ignore[assignment]
@@ -566,7 +574,7 @@ def load_findings_dataframe(
                 "Rule ID": _normalise(getattr(first_ev, "rule_id", None)),
                 "NIST References": _normalise(collect_nist_references(ev_list)),
                 "BOM Reference": "unknown",
-                "Description": _normalise(CBOMSerializer._finding_value(component, "explanation") if CBOMSerializer else getattr(first_ev, "risk_reasoning", None)),
+                "Description": _normalise(CBOMSerializer._finding_value(component, "explanation") if CBOMSerializer is not None else getattr(first_ev, "risk_reasoning", None)),
             })
 
     columns = [

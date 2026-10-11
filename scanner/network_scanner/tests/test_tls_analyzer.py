@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction as F, QuantumRiskLevel as Q
+from scanner.models import AssetType, CryptoFinding
+from scanner.models import CryptoFunction as F
+from scanner.models import QuantumRiskLevel as Q
 from scanner.network_scanner.analyser.tls_analyzer import analyze_tls
-
 
 PATH = Path("captured.pcap")
 

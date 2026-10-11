@@ -1,6 +1,6 @@
 """Regression coverage for CBOM assessment preservation after the merge."""
-from scanner.cbom import CBOMSerializer
 from dashboard import _report_findings_from_cbom, load_findings_dataframe
+from scanner.cbom import CBOMSerializer
 
 
 def test_export_preserves_explicit_unknown_without_assuming_safe():

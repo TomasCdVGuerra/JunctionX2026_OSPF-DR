@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from scanner.models import CryptoFinding
@@ -40,9 +40,9 @@ def find_tshark_binary() -> str:
         for directory in (os.environ.get("ProgramFiles", r"C:\Program Files"),
                           os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
             candidates.append(Path(directory) / "Wireshark" / "tshark.exe")
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
+    for c_path in candidates:
+        if c_path.is_file():
+            return str(c_path)
     raise PcapParserError(
         "O 'tshark' não foi encontrado. Instala o Wireshark/TShark, "
         "adiciona-o ao PATH ou define TSHARK_PATH."
@@ -103,8 +103,11 @@ def _number(value: Any) -> int | None:
 def _normalize_tls_version(version_raw: str | None) -> str | None:
     if not version_raw:
         return None
+    num = _number(version_raw)
+    if num is None:
+        return version_raw
     return {768: "SSL 3.0", 769: "TLS 1.0", 770: "TLS 1.1",
-            771: "TLS 1.2", 772: "TLS 1.3"}.get(_number(version_raw), version_raw)
+            771: "TLS 1.2", 772: "TLS 1.3"}.get(num, version_raw)
 
 
 _COMMON_FIELDS = ["frame.number", "frame.time_epoch", "tcp.stream", "ip.src", "ip.dst",

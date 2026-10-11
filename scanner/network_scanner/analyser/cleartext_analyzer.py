@@ -32,10 +32,10 @@ def analyze_cleartext(entries: list[dict], path: Path) -> list[CryptoFinding]:
             risk_override=(
                 QuantumRiskLevel.UNKNOWN,
                 QuantumRiskLevel.CRITICAL,
-                "Plaintext application traffic provides no transport "
-                "confidentiality; its contents can be intercepted.",
-                "Protect this protocol with an encrypted, authenticated "
-                "transport such as TLS, or disable plaintext access.",
+                ("Plaintext application traffic provides no transport "
+                "confidentiality; its contents can be intercepted."),
+                ("Protect this protocol with an encrypted, authenticated "
+                "transport such as TLS, or disable plaintext access."),
             ),
         )
         findings.append(finding)

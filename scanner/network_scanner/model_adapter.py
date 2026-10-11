@@ -6,15 +6,25 @@ Protocol proposals are not evidence that an algorithm was negotiated.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence
 from scanner.network_scanner.algorithm_mapper import (
-    CIPHER_SUITES, GROUPS, SIGNATURE_SCHEMES, Observation, Primitive, CipherSuiteVersionError,
-    cipher_primitives, identifier_label, is_grease, parse_identifier, network_context,
-    SSH_FIELDS, SSH_MARKERS,
+    CIPHER_SUITES,
+    GROUPS,
+    SIGNATURE_SCHEMES,
+    SSH_FIELDS,
+    SSH_MARKERS,
+    CipherSuiteVersionError,
+    Observation,
+    Primitive,
+    cipher_primitives,
+    identifier_label,
+    is_grease,
+    network_context,
+    parse_identifier,
 )
 
 
@@ -73,7 +83,7 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
         if hello not in {"Client Hello", "Server Hello"} or entry.get("hello_retry_request"):
             continue
         client = hello == "Client Hello"
-        observation = "advertised" if client else "negotiated"
+        observation: Observation = "advertised" if client else "negotiated"
         protocol = entry.get("tls_version")
         versions = _values(entry.get("supported_versions")) if client else []
         versions = versions or _values(protocol)
@@ -86,7 +96,7 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
         for value in _unique_identifiers(ciphers):
             identifier = parse_identifier(value)
             # GREASE and SCSV are negotiation markers, not cryptographic primitives.
-            if is_grease(identifier) or identifier in {0x00FF, 0x5600}:
+            if identifier is None or is_grease(identifier) or identifier in {0x00FF, 0x5600}:
                 continue
             suite = CIPHER_SUITES.get(identifier)
             context = {"cipher_suite": identifier_label(value)}
@@ -115,7 +125,7 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
                   if client else _values(entry.get("selected_group")))
         for value in _unique_identifiers(groups):
             identifier = parse_identifier(value)
-            if is_grease(identifier):
+            if identifier is None or is_grease(identifier):
                 continue
             primitive = GROUPS.get(identifier) or Primitive(
                 f"TLS-GROUP-{identifier_label(value)}", CryptoFunction.KEY_EXCHANGE)
@@ -127,10 +137,10 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
         schemes = _values(entry.get("signature_algorithms")) if client else []
         for value in _unique_identifiers(schemes):
             identifier = parse_identifier(value)
-            if is_grease(identifier):
+            if identifier is None or is_grease(identifier):
                 continue
-            primitives = SIGNATURE_SCHEMES.get(identifier) or (
-                Primitive(f"TLS-SIGNATURE-{identifier_label(value)}", CryptoFunction.SIGN),)
+            primitives = list(SIGNATURE_SCHEMES.get(identifier) or (
+                Primitive(f"TLS-SIGNATURE-{identifier_label(value)}", CryptoFunction.SIGN),))
             for primitive in primitives:
                 findings.append(_finding(path, entry, primitive, "advertised",
                                          "NETWORK-TLS-SIGNATURE", protocol,

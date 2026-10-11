@@ -3,7 +3,10 @@ import pytest
 
 from dashboard import _build_cbom_from_findings, load_findings_dataframe
 from scanner.models import CryptoFinding, CryptoFunction, Evidence
-from scanner.nist_references import collect_nist_references, nist_references_for_algorithm
+from scanner.nist_references import (
+    collect_nist_references,
+    nist_references_for_algorithm,
+)
 from scanner.risk import enrich_finding
 
 

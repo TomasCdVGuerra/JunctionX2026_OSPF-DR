@@ -3,6 +3,9 @@ exclude = [
     "support-materials/**",
 ]
 
+[tool.ruff.lint]
+ignore = ["TRY004"]
+
 [tool.mypy]
 python_version = "3.13"
 ignore_missing_imports = false
