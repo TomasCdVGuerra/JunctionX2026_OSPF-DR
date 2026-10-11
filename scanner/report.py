@@ -22,6 +22,22 @@ HYGIENE_MEDIUM_WEIGHT: float = 30.0
 RISK_TIERS: tuple[str, ...] = ("Critical", "Medium", "Safe", "Unknown")
 
 
+def summarize_scan_coverage(outcomes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe input processing independently of finding risk/assessment coverage."""
+    complete_statuses = {"With findings", "No detections"}
+    total = len(outcomes)
+    completed = sum(row.get("Status") in complete_statuses for row in outcomes)
+    failed = sum(row.get("Status") == "Failed" for row in outcomes)
+    skipped = sum(row.get("Status") == "Skipped" for row in outcomes)
+    limited = sum(row.get("Status") in complete_statuses and row.get("Scanner") == "FALLBACK heuristic"
+                  for row in outcomes)
+    unrecorded = total - completed - failed - skipped
+    status = "Unknown" if not total else "Partial" if failed or skipped or limited or unrecorded else "Complete"
+    return {"status": status, "total_inputs": total, "completed_inputs": completed,
+            "failed_inputs": failed, "skipped_inputs": skipped, "limited_inputs": limited,
+            "unrecorded_inputs": unrecorded}
+
+
 def _unwrap_enum(value: Any) -> Any:
     """Return raw string value if value is an Enum instance."""
     return getattr(value, "value", value)

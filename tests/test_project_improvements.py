@@ -117,10 +117,17 @@ def test_streamlit_renders_score_and_coverage_independent_of_filter():
     metrics = {metric.label: metric.value for metric in app.metric}
     assert metrics["Quantum Risk Score"] == "15.00/100"
     assert metrics["Quantum Assessment Coverage"] == "66.67%"
+    assert metrics["Quantum Unknown"] == "1"
     quantum_filter = next(widget for widget in app.multiselect if widget.label == "Quantum risk")
     quantum_filter.set_value(["Safe"])
     app.run(timeout=20)
     assert not app.exception
     assert {metric.label: metric.value for metric in app.metric} == metrics
     assert len(app.dataframe[0].value) == 1
-    assert "Library / API" in app.dataframe[0].value.columns
+    assert len(app.dataframe[0].value.columns) == 6
+    assert "Library / API" in app.dataframe[1].value.columns
+    quantum_filter = next(widget for widget in app.multiselect if widget.label == "Quantum risk")
+    quantum_filter.set_value([])
+    app.run(timeout=20)
+    assert not app.exception
+    assert any("No findings match" in message.value for message in app.info)

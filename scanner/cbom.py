@@ -266,6 +266,9 @@ class CBOMSerializer:
             f"{source_type}:{source_path}:{canonical_algorithm}:{operation}:"
             f"{rule_id}:{line_num}:{packet_num}:{json_path}"
         )
+        input_id = self._get_attribute(finding, "scan_input_id", default=None)
+        if input_id is not None:
+            ref_seed += f":input-{input_id}"
         base_hash = hashlib.sha256(
             ref_seed.encode("utf-8")
         ).hexdigest()[:12]
@@ -316,7 +319,7 @@ class CBOMSerializer:
             ],
         }
 
-        for field in ("classical_risk", "recommendation", "observation", "confidence", "key_size", "mode", "library"):
+        for field in ("classical_risk", "recommendation", "observation", "confidence", "key_size", "mode", "library", "scan_input_id"):
             value = self._get_attribute(finding, field, default=None)
             if value is not None:
                 component["properties"].append({

@@ -24,7 +24,8 @@ Limpar a análise ativa e carregar conjuntamente:
 
 Os uploads com o mesmo nome são isolados em pastas temporárias diferentes.
 Para distinguir os vários `main.go`, consultar o snippet e a regra: o dashboard
-atualmente mostra o nome original, sem a pasta do projeto.
+mostra `#Input ID main.go`, ligado à entrada em File scan coverage. A evidência
+preserva o nome original, sem inventar a pasta do projeto.
 
 Deixar todos os filtros selecionados e a pesquisa vazia.
 
@@ -61,14 +62,30 @@ completa de fluxo de dados; um resultado vazio não prova ausência de criptogra
    tem 609 seleções identificadas ou inferidas. Isto não prova conclusão da sessão.
 5. Mostrar referências e recomendações. Referências NIST são publicações técnicas,
    não certificação; nos híbridos, uma referência pode cobrir apenas um componente.
+   Selecionar uma linha da tabela compacta para abrir avaliação, ação recomendada
+   e evidência. Full table permite consultar todas as colunas anteriores.
+   Cada eixo mostra o significado do nível e a justificação. Unknown destaca
+   dados em falta e os problemas já conhecidos, como CBC numa suite incompleta.
    Em código, consultar Library / API. Em Java é a API identificada, não o provider
    da implementação. O CBOM preserva esta informação e inclui cryptoProperties nativas.
 6. Confirmar que as métricas superiores mantêm o inventário completo quando os
    filtros mudam. O gráfico, tabela e CSV acompanham os filtros.
 7. Repor todos os filtros e descarregar CSV (2537 linhas) e CBOM CycloneDX 1.6.
    O CBOM contém o inventário completo, independentemente dos filtros da tabela.
+   Selecionar uma linha não restringe o CSV: exporta todas as linhas filtradas e
+   todos os campos da tabela completa.
 
 ## Limites a explicar
+
+Mostrar a ordenação por prioridade, que considera ambos os eixos, e abrir
+Priority actions para consultar recomendações agrupadas e exportar o CSV.
+Abrir File scan coverage para distinguir deteções, ausência de deteções e
+falhas. Para demonstrar isolamento de erros, carregar um JSON inválido com
+um export cloud válido: os findings do válido continuam disponíveis.
+
+Input Scan Status deve mostrar Partial nesse cenário, mesmo que os findings
+do ficheiro válido sejam Safe. FAILING continua visível se houver risco crítico.
+Repetir com dois ficheiros do mesmo nome e confirmar Input ID na tabela e CSV.
 
 - Advertised é uma capacidade oferecida; negotiated é uma seleção; observed
   é evidência direta. Não agregar estas categorias como sessões distintas.
@@ -88,3 +105,26 @@ Executar a suite completa, rever os ficheiros alterados e repetir os uploads
 reais. Os colegas que implementam Python/Java devem devolver `CryptoFinding`,
 preservar evidência, deixar parâmetros por resolver como `None` e validar
 o percurso até ao dashboard e aos exports.
+
+## Ensaio num segundo PC
+
+Este passo exige outro computador; os testes locais não o substituem.
+
+1. Num checkout atualizado, com Python 3.13, executar `run.ps1 -Mode test`
+   ou `bash run.sh --test`. Confirmar também `python -m pip check` no ambiente.
+2. Instalar TShark separadamente e confirmar que é detetado. Sem TShark,
+   os testes offline podem passar e o teste de captura real fica skipped.
+3. Iniciar a dashboard e carregar os inputs da demo. Confirmar as contagens
+   de inventário, Input Scan Status Complete e evidência de JSON/linha/pacote.
+   Complete refere-se ao processamento, não à avaliação de todos os riscos.
+4. Repetir com um JSON inválido junto de um válido. Confirmar Partial e
+   persistência dos findings válidos. Com nomes repetidos, confirmar Input ID.
+5. Aplicar filtros, selecionar um finding e exportar CSV, ações e CBOM.
+   Reimportar o CBOM e confirmar identidade e estado de cobertura preservados.
+6. Após integrar o workflow no GitHub, confirmar execução bem-sucedida dos
+   jobs Windows/Linux. O job Linux exige a validação real com TShark.
+
+Registar sistema operativo, Python, TShark, resultado dos testes e quaisquer
+diferenças observadas. As classificações de HMAC/HKDF/PRF SHA-2 na rede agora
+permanecem Unknown sem parâmetros suficientes; isso pode aumentar Unknown
+sem alterar a contagem total de observações.

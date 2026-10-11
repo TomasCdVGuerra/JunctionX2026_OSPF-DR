@@ -8,7 +8,7 @@
 
 3. Instalar as dependências partilhadas: python -m pip install -r requirements.txt
 
-4. Ao acrescentar uma dependência, editar requirements.txt conscientemente e comunicar a alteração à equipa. Não substituir o ficheiro com pip freeze do ambiente pessoal. Todos devem usar Python 3.13; os intervalos de versões atuais não constituem um lockfile.
+4. Ao acrescentar uma dependência, editar requirements.txt conscientemente e comunicar a alteração à equipa. Não substituir o ficheiro com pip freeze do ambiente pessoal. Todos devem usar Python 3.13. O ficheiro fixa versões diretas e transitivas obtidas num ambiente limpo validado; não inclui hashes. Após alterar dependências, repetir instalação limpa, pip check e testes, atualizando o snapshot com as dependências necessárias.
 
 ## Comandos para iniciar o Python Environment (em sessões futuras):
 1. Ativar o ambiente (conforme o OS indicado acima).

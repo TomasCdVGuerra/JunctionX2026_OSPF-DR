@@ -76,6 +76,36 @@ As métricas superiores usam o inventário completo. Filtros afetam tabela,
 gráfico e CSV; o CBOM exporta o inventário completo. As contagens são
 observações, não sistemas, recursos ou sessões únicos. Safe não certifica a aplicação.
 
+A tabela principal apresenta seis colunas essenciais. Selecionar uma linha
+abre a avaliação, recomendação, parâmetros conhecidos e evidência. Full table
+preserva a vista com todas as colunas; os detalhes técnicos incluem o registo
+completo. A seleção de uma linha não restringe os exports. A pesquisa também
+inclui recomendações e bibliotecas/APIs.
+
+A ordem inicial considera ambos os riscos: Critical, Medium, Unresolved e
+Safe. Esta prioridade serve para leitura, sem alterar as classificações.
+Priority actions agrupa recomendações idênticas à mesma prioridade nos
+findings filtrados e permite exportar um CSV de ações. As contagens continuam
+a representar observações, incluindo capacidades advertised.
+
+File scan coverage mostra o estado de cada entrada: With findings,
+No detections, Failed ou Skipped, com scanner, contagem e erro. Ficheiros
+inválidos não impedem a análise dos restantes; nomes repetidos têm números
+de entrada distintos. No detections não significa Safe. O resumo fica no
+CBOM em `metadata.properties` como `cryptotrace:scanOutcomes`; CBOMs antigos
+sem esta propriedade não permitem reconstruir o estado dos ficheiros.
+Quantum Unknown aparece também nas métricas principais.
+
+Input Scan Status distingue Complete, Partial e Unknown junto da postura.
+Falhas, entradas ignoradas ou fallback mostram um aviso de análise parcial;
+os riscos conhecidos e o score dos findings mantêm-se. Cada finding de uma
+análise nova tem Input ID, ligado ao número em File scan coverage. A tabela
+compacta mostra `#1 main.go`, por exemplo; detalhes, CSV e CBOM preservam
+essa associação sem alterar o nome original da evidência.
+
+Ver [RISK_POLICY.md](RISK_POLICY.md) para os critérios comuns e as diferenças
+de contexto entre o motor geral e os analisadores de rede.
+
 Cloud e código usam o motor geral; rede preserva avaliações dos analisadores
 com contexto de TLS/SSH. Advertised, negotiated e observed têm significados
 diferentes; uma oferta ou seleção não prova conclusão da sessão.
@@ -103,8 +133,16 @@ python -m pytest -q
 A suite inclui validação offline do schema CycloneDX 1.6, integração dos
 scanners e testes de regressão. tests/fixtures/expected_findings.json
 contém expectativas explicadas para nove ficheiros de código revistos.
+expected_cloud_findings.json cobre KMS/ACM completos e cinco observações
+selecionadas de policy ELB. expected_network_findings.json cobre 46
+observações esperadas em cinco pacotes concretos de TLS, SSH e HTTP.
 Esta amostra não mede precisão/recall globais. Testes de rede com metadata
 controlada não substituem uma execução real com TShark.
+
+O teste dos pacotes revistos também corre com TShark real quando disponível.
+Na CI Linux é obrigatório; em máquinas sem TShark esse teste fica skipped,
+mantendo os testes offline. `.github/workflows/tests.yml` executa a suite
+em Windows e Linux com Python 3.13 após push/PR.
 
 Ver [DEMO.md](DEMO.md) para uploads, contagens observadas e percurso da demo.
 
@@ -115,7 +153,8 @@ Ver [DEMO.md](DEMO.md) para uploads, contagens observadas e percurso da demo.
   chaves hardcoded ou geradores pseudoaleatórios.
 - Cobertura Cloud é específica dos exports suportados e das policies do catálogo.
 - Um resultado vazio não prova ausência de criptografia.
-- requirements.txt tem intervalos de versões; não é um lockfile.
+- requirements.txt fixa versões diretas e transitivas do ambiente limpo
+  validado em Windows/Python 3.13. Não inclui hashes; a CI verifica Linux.
 - Falta alargar a referência manual a todos os exemplos e medir omissões/falsos positivos.
 - Agrupamento por recurso/sessão, análise entre funções, harmonização adicional
   das políticas e plano de migração priorizado são próximas evoluções.

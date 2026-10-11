@@ -111,11 +111,19 @@ def assess_primitive(
         )
 
     if name == "AES":
+        normalized_mode = mode.strip().upper() if isinstance(mode, str) else None
+        if normalized_mode == "ECB":
+            return (
+                Q.UNKNOWN if key_size not in {128, 192, 256} else Q.SAFE if key_size == 256 else Q.MEDIUM,
+                Q.CRITICAL,
+                "AES-ECB exposes repeated-block patterns independently of key size. "
+                "Missing or unsupported key size leaves the quantum assessment unknown.",
+                "Replace ECB with authenticated encryption and confirm the key size and nonce handling.",
+            )
         if key_size not in {128, 192, 256}:
             return unknown
 
         quantum = Q.SAFE if key_size == 256 else Q.MEDIUM
-        normalized_mode = mode.strip().upper() if isinstance(mode, str) else None
         if normalized_mode in {"CBC", "CCM_8"}:
             classical = Q.MEDIUM
         elif normalized_mode in {"GCM", "CCM", "CTR"}:
@@ -192,15 +200,17 @@ def assess_primitive(
             )
 
         return (
-            Q.SAFE,
-            Q.SAFE,
+            Q.UNKNOWN,
+            Q.UNKNOWN,
             (
-                "The identified SHA-2 keyed construction has no known "
-                "Shor-style attack; secret input quality remains relevant."
+                "The advertised or selected SHA-2 keyed construction alone does not "
+                "establish secret input entropy or complete MAC/KDF parameters. "
+                "Both risk assessments remain unknown; a digest name or key length "
+                "does not prove secret input quality."
             ),
             (
-                "Retain the SHA-2 construction and ensure "
-                "sufficient secret key entropy."
+                "Verify secret input entropy and protocol-specific parameters "
+                "(including MAC tag length or KDF context) before concluding safety."
             ),
         )
 
