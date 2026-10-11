@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import logging
 import re
 import sys
@@ -59,7 +60,7 @@ except ImportError:  # pragma: no cover
     pcap_scanner = None  # type: ignore[assignment]
 
 try:
-    from scanner.report import calculate_hygiene_score, calculate_posture_status
+    from scanner.report import build_report_summary, calculate_hygiene_score, calculate_posture_status
 except ImportError:  # pragma: no cover
     calculate_hygiene_score = None  # type: ignore[assignment]
     calculate_posture_status = None  # type: ignore[assignment]
@@ -429,7 +430,7 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     row = {
         "Algorithm": _normalise(component.get("name")),
         "Risk Rating": risk_rating,
-        "Classical Risk": property_value("cryptotrace:classical_risk").capitalize(),
+        "Classical Risk": properties.get("cryptotrace:classical_risk", properties.get("cryptotrace:classicalRisk", "unknown")).capitalize(),
         "Recommendation": property_value("cryptotrace:recommendation"),
         "Observation": property_value("cryptotrace:observation"),
         "Scanner source": scanner_source,
@@ -450,9 +451,10 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
             "unknown",
         ),
         "Rule ID": evidence.get("Rule ID", "unknown"),
-        "NIST References": evidence.get(
-            "NIST References",
-            "unknown",
+        "NIST References": (
+            evidence.get("NIST References", "unknown")
+            if evidence.get("NIST References", "unknown") != "unknown"
+            else properties.get("cryptotrace:nistStandard", "unknown")
         ),
         "BOM Reference": _normalise(component.get("bom-ref")),
         "Description": _normalise(component.get("description")),
@@ -646,7 +648,25 @@ def render_cli_fallback_notice() -> None:
     )
 
 
-def _render_metrics(full_dataframe) -> None:
+def _report_findings_from_dataframe(dataframe) -> list[dict[str, Any]]:
+    """Adapt displayed CBOM fields for reporting, preserving unknown assessments."""
+    return [{
+        "algorithm_name": row["Algorithm"],
+        "quantum_risk": row["Risk Rating"].lower(),
+        "classical_risk": row["Classical Risk"].lower(),
+        "source_type": row["Source Type"], "source_path": row["Source Path"],
+        "quantum_vulnerable": row["Quantum Vulnerable"].lower() == "true",
+        "quantum_safe": row["Quantum Safe"].lower() == "true",
+        "nist_standard": row["NIST References"], "reasoning": row["Description"],
+    } for _, row in dataframe.iterrows()]
+
+
+def _report_findings_from_cbom(cbom: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract an existing assessment without reinterpreting incomplete CBOM data."""
+    return _report_findings_from_dataframe(load_findings_dataframe(cbom))
+
+
+def _render_metrics(full_dataframe, summary=None) -> None:
     """Render decoupled Hygiene vs Posture metrics from the full CBOM."""
     total_assets = len(full_dataframe)
     if total_assets == 0:
@@ -667,7 +687,9 @@ def _render_metrics(full_dataframe) -> None:
     vuln_series = full_dataframe["Quantum Vulnerable"].astype(str).str.lower()
     vuln_count = int((vuln_series == "true").sum())
 
-    if calculate_hygiene_score is not None:
+    if summary is not None:
+        hygiene_score = summary["hygiene_score"]
+    elif calculate_hygiene_score is not None:
         hygiene_score = calculate_hygiene_score(
             [{"classical_risk": row.get("Classical Risk", row["Risk Rating"])} for _, row in full_dataframe.iterrows()]
         )
@@ -678,7 +700,7 @@ def _render_metrics(full_dataframe) -> None:
         )
 
     if calculate_posture_status is not None:
-        raw_status = calculate_posture_status(
+        raw_status = summary["posture_status"] if summary is not None else calculate_posture_status(
             [
                 {
                     "quantum_risk": row["Risk Rating"],
@@ -824,6 +846,21 @@ def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
     }
 
 
+def _missing_language_scanner_warning(suffix: str) -> str | None:
+    """The dispatcher can exist while a language implementation is unavailable."""
+    language = {".py": ("Python", "python", "scan_python_file"), ".java": ("Java", "java", "scan_java_file")}.get(suffix)
+    if language is None:
+        return None
+    label, module_name, method = language
+    try:
+        module = importlib.import_module(f"scanner.{module_name}_scanner")
+        if callable(getattr(module, method, None)):
+            return None
+    except ImportError:
+        pass
+    return f"source-code ({label} scanner missing)"
+
+
 def scan_uploaded_files(
     uploaded_files: list[Any],
 ) -> tuple[dict[str, Any] | None, list[str]]:
@@ -931,6 +968,9 @@ def scan_uploaded_files(
         # 3. Scan Source code files
         for src_path, orig_name in source_uploads:
             try:
+                missing = _missing_language_scanner_warning(src_path.suffix.lower())
+                if missing and missing not in warnings:
+                    warnings.append(missing)
                 real_scanner = _get_source_scanner_file()
                 src_findings = []
                 if real_scanner:
@@ -985,6 +1025,11 @@ def scan_bundled_data(
 
     if sample_repos.exists():
         try:
+            for suffix in (".py", ".java"):
+                if any(sample_repos.rglob(f"*{suffix}")):
+                    missing = _missing_language_scanner_warning(suffix)
+                    if missing:
+                        warnings.append(missing)
             real_scanner = _get_source_scanner_dir()
             if real_scanner:
                 scanner_mod, method_name = real_scanner
@@ -1117,6 +1162,7 @@ def render_dashboard(
         f"Generated: {timestamp}"
     )
 
+    discovery_limits = []
     if "Scanner source" in dataframe.columns:
         fallback_mask = dataframe["Scanner source"] == "FALLBACK heuristic"
         if fallback_mask.any():
@@ -1125,7 +1171,14 @@ def render_dashboard(
                 for t in dataframe.loc[fallback_mask, "Source Type"].dropna().unique()
             )
             types_str = ", ".join(used_types) if used_types else "unknown inputs"
-            st.warning(f"⚠️ Fallback heuristic scanner used for: {types_str}. Discovery is limited; policy expansion and network negotiation require the full scanners.")
+            discovery_limits.append(types_str)
+    discovery_limits.extend(
+        warning for warning in st.session_state.get("scan_warnings", [])
+        if isinstance(warning, str) and "scanner missing" in warning
+    )
+    if discovery_limits:
+        st.warning("⚠️ Fallback heuristic / incomplete discovery: " + "; ".join(discovery_limits)
+                   + ". Policy expansion and network negotiation require the full scanners.")
 
     filtered_dataframe = dataframe[
         dataframe["Source Type"].isin(selected_sources)
@@ -1163,7 +1216,7 @@ def render_dashboard(
 
         filtered_dataframe = filtered_dataframe[search_mask]
 
-    _render_metrics(dataframe)
+    _render_metrics(dataframe, summary=build_report_summary(_report_findings_from_dataframe(dataframe)))
 
     chart_column, summary_column = st.columns([1, 1])
 

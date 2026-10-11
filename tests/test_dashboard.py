@@ -856,18 +856,18 @@ def test_report_findings_from_cbom_structure_and_enrichment():
     rsa_f = report_findings[0]
     assert rsa_f["algorithm_name"] == "RSA-2048"
     assert rsa_f["quantum_risk"] == "critical"
-    assert rsa_f["classical_risk"] == "Safe"
+    assert rsa_f["classical_risk"] == "safe"
     assert rsa_f["source_type"] == "source-code"
     assert rsa_f["source_path"] == "auth/rsa.py"
     assert rsa_f["quantum_vulnerable"] is True
     assert rsa_f["quantum_safe"] is False
     assert rsa_f["nist_standard"] == "FIPS 186-5"
-    assert "Shor" in rsa_f["reasoning"]
+    assert rsa_f["reasoning"] == "unknown"  # No reasoning was supplied by this CBOM.
 
     aes_f = report_findings[1]
     assert aes_f["algorithm_name"] == "AES-256-GCM"
     assert aes_f["quantum_risk"] == "safe"
-    assert aes_f["classical_risk"] == "Safe"
+    assert aes_f["classical_risk"] == "safe"
     assert aes_f["source_type"] == "cloud-posture"
     assert aes_f["quantum_vulnerable"] is False
     assert aes_f["quantum_safe"] is True
@@ -949,7 +949,7 @@ def test_metrics_remain_independent_of_filters():
     with patch("dashboard.st") as mock_st, patch("dashboard._render_metrics", side_effect=mock_render_metrics):
         mock_st.file_uploader.return_value = None
         # Simulate filter: user selects ONLY "Safe", which filters out RSA-2048
-        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if "Risk level" in label else default
+        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if "Risk tier" in label else default
         mock_st.text_input.return_value = ""
         mock_st.button.return_value = False
         mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
@@ -992,18 +992,18 @@ def test_dual_axis_and_reasoning_in_dataframe():
     }
 
     df = load_findings_dataframe(sample_cbom)
-    assert "Quantum Risk" in df.columns
+    assert "Risk Rating" in df.columns
     assert "Classical Risk" in df.columns
-    assert "NIST Standard" in df.columns
+    assert "NIST References" in df.columns
     assert "Description" in df.columns
 
     rsa_row = df[df["Algorithm"] == "RSA-2048"].iloc[0]
-    assert rsa_row["Quantum Risk"] == "Critical"
+    assert rsa_row["Risk Rating"] == "Critical"
     assert rsa_row["Classical Risk"] == "Safe"
     assert "Shor" in str(rsa_row["Description"])
 
     md5_row = df[df["Algorithm"] == "MD5"].iloc[0]
-    assert md5_row["Quantum Risk"] == "Critical"
+    assert md5_row["Risk Rating"] == "Critical"
     assert md5_row["Classical Risk"] == "Critical"
 
 

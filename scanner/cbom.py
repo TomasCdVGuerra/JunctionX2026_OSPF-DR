@@ -190,16 +190,8 @@ class CBOMSerializer:
         classical_risk = self._stringify(
             self._finding_value(finding, "classical_risk")
         )
-        if classical_risk == "unknown" and canonical_algorithm != "unknown":
-            from scanner.risk import evaluate_risk, is_classically_broken
-            if is_classically_broken(canonical_algorithm):
-                classical_risk = "critical"
-            else:
-                risk_tier, _, _, _ = evaluate_risk(canonical_algorithm)
-                if risk_tier.value == "critical":
-                    classical_risk = "medium" if "1024" in canonical_algorithm else "safe"
-                elif risk_tier.value in ("medium", "safe"):
-                    classical_risk = "safe"
+        # Serialization preserves the supplied assessment, including unknown.
+        # Risk enrichment belongs to the central engine before export.
         quantum_vulnerable = self._stringify(
             self._finding_value(
                 finding,
