@@ -1,3 +1,103 @@
 {
-  "_comment": "Maps each AWS ELB SslPolicy name (e.g. ELBSecurityPolicy-TLS-1-1-2017-01, ELBSecurityPolicy-2016-08) to its supported TLS protocol versions and cipher suites, taken from AWS's official security-policy reference table, because cloud configuration JSON dumps record only policy names rather than individual negotiated cryptographic primitives."
+  "_comment": "Políticas referenciadas pelo dataset QuantumTrace. Capacidades verificadas na documentação AWS; não representam negociações observadas.",
+  "policies": {
+    "ELBSecurityPolicy-2016-08": {
+      "protocols": ["TLSv1.2", "TLSv1.1", "TLSv1.0"],
+      "ciphers": [
+        "ECDHE-ECDSA-AES128-GCM-SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES128-SHA256",
+        "ECDHE-RSA-AES128-SHA256",
+        "ECDHE-ECDSA-AES128-SHA",
+        "ECDHE-RSA-AES128-SHA",
+        "ECDHE-ECDSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES256-GCM-SHA384",
+        "ECDHE-ECDSA-AES256-SHA384",
+        "ECDHE-RSA-AES256-SHA384",
+        "ECDHE-ECDSA-AES256-SHA",
+        "ECDHE-RSA-AES256-SHA",
+        "AES128-GCM-SHA256",
+        "AES128-SHA256",
+        "AES128-SHA",
+        "AES256-GCM-SHA384",
+        "AES256-SHA256",
+        "AES256-SHA"
+      ],
+      "source_url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html",
+      "verified_on": "2026-10-10"
+    },
+    "ELBSecurityPolicy-TLS-1-1-2017-01": {
+      "protocols": ["TLSv1.2", "TLSv1.1"],
+      "ciphers": [
+        "ECDHE-ECDSA-AES128-GCM-SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES128-SHA256",
+        "ECDHE-RSA-AES128-SHA256",
+        "ECDHE-ECDSA-AES128-SHA",
+        "ECDHE-RSA-AES128-SHA",
+        "ECDHE-ECDSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES256-GCM-SHA384",
+        "ECDHE-ECDSA-AES256-SHA384",
+        "ECDHE-RSA-AES256-SHA384",
+        "ECDHE-ECDSA-AES256-SHA",
+        "ECDHE-RSA-AES256-SHA",
+        "AES128-GCM-SHA256",
+        "AES128-SHA256",
+        "AES128-SHA",
+        "AES256-GCM-SHA384",
+        "AES256-SHA256",
+        "AES256-SHA"
+      ],
+      "source_url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html",
+      "verified_on": "2026-10-10"
+    },
+    "ELBSecurityPolicy-FS-1-2-Res-2020-10": {
+      "protocols": ["TLSv1.2"],
+      "ciphers": [
+        "ECDHE-ECDSA-AES128-GCM-SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES256-GCM-SHA384"
+      ],
+      "source_url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html",
+      "verified_on": "2026-10-10"
+    },
+    "ELBSecurityPolicy-TLS13-1-2-2021-06": {
+      "protocols": ["TLSv1.3", "TLSv1.2"],
+      "ciphers": [
+        "TLS_AES_128_GCM_SHA256",
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_CHACHA20_POLY1305_SHA256",
+        "ECDHE-ECDSA-AES128-GCM-SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES128-SHA256",
+        "ECDHE-RSA-AES128-SHA256",
+        "ECDHE-ECDSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES256-GCM-SHA384",
+        "ECDHE-ECDSA-AES256-SHA384",
+        "ECDHE-RSA-AES256-SHA384"
+      ],
+      "source_url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/describe-ssl-policies.html",
+      "verified_on": "2026-10-10"
+    },
+    "ELBSecurityPolicy-TLS-1-2-2017-01": {
+      "protocols": ["TLSv1.2"],
+      "ciphers": [
+        "ECDHE-ECDSA-AES128-GCM-SHA256",
+        "ECDHE-RSA-AES128-GCM-SHA256",
+        "ECDHE-ECDSA-AES128-SHA256",
+        "ECDHE-RSA-AES128-SHA256",
+        "ECDHE-ECDSA-AES256-GCM-SHA384",
+        "ECDHE-RSA-AES256-GCM-SHA384",
+        "ECDHE-ECDSA-AES256-SHA384",
+        "ECDHE-RSA-AES256-SHA384",
+        "AES128-GCM-SHA256",
+        "AES128-SHA256",
+        "AES256-GCM-SHA384",
+        "AES256-SHA256"
+      ],
+      "source_url": "https://docs.aws.amazon.com/elasticloadbalancing/latest/network/describe-ssl-policies.html",
+      "verified_on": "2026-10-10"
+    }
+  }
 }

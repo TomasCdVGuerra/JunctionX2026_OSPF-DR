@@ -1,36 +1,55 @@
-## Comandos para Python Environment (criar pela primeira vez):
-1. python -m venv .venv (ou py -3.13 -m venv .venv se tiverem versões diferentes desta)
+# QuantumTrace
 
-2. Ativar o ambiente (escolher o comando com base no OS/terminal):
-    - Windows (PowerShell): .venv\Scripts\Activate.ps1 
-    - (Git Bash): source .venv/Scripts/activate
-    - Linux / macOS: source .venv/bin/activate
+> **Post-Quantum Cryptographic Discovery Scanner and CycloneDX 1.6 CBOM Analytics Engine**
 
-3. Instalar as bibliotecas pretendidas (com pip install ou python -m pip install)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![CycloneDX 1.6](https://img.shields.io/badge/CycloneDX-1.6%20CBOM-success.svg)](https://cyclonedx.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-4. python -m pip freeze > requirements.txt (voltar a fazer isto sempre que instalar ou atualizar bibliotecas)
+QuantumTrace is an automated post-quantum cryptographic discovery and posture management platform designed to identify Shor- and Grover-vulnerable algorithms across multi-language source code, AWS cloud posture configurations, and network traffic captures.
 
-## Comandos para iniciar o Python Environment (em sessões futuras):
-1. Ativar o ambiente (conforme o OS indicado acima).
-2. (Opcional) python -m pip install -r requirements.txt (Nota: Só é necessário executar este passo se tiver mudados de computador, clonado o projeto do Git novamente ou se outra pessoa no projeto tiver adicionado novas bibliotecas ao ficheiro requirements.txt).
+---
 
-# Correr testes iniciais:
-- python.exe -m pytest tests/test_phase0_contract.py -q
+## ⚡ Quickstart
 
-# Overview
-<!-- Explain the purpose of QuantumTrace: a multi-source cryptographic scanner designed for the JunctionX Lisbon 2026 PQC migration challenge to discover quantum-vulnerable cryptography across source code, AWS cloud posture exports, and PCAP captures, outputting an official CycloneDX 1.6 CBOM. -->
+### 1. Installation
 
-# Install
-<!-- Provide installation instructions including Python 3.12 virtual environment creation and installing dependencies via pip install -r requirements.txt. -->
+```bash
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
-# Run
-<!-- Provide CLI execution commands for full end-to-end scanning (python main.py --all), running the Streamlit dashboard (streamlit run dashboard.py), executing unit/integration tests with pytest, and running the automated run.sh script. -->
+# Install dependencies
+pip install -r requirements.txt
+```
 
-# Example output
-<!-- Show sample terminal output featuring the Rich table summary, quantum risk score breakdown (Critical, Medium, Safe), and snippets from the exported CycloneDX 1.6 CBOM JSON. -->
+### 2. Launch the Analytics Dashboard
 
-# How it works
-<!-- Describe the scanning architecture: static regex pattern matching with same-file constant resolution for source code (Python, Java, Go), AWS JSON configuration parsing (KMS, ALB with ELB policy mapping, ACM), pure-Python PCAP parsing for TLS handshake cipher suites, and risk evaluation against NIST PQC standards (FIPS 203, 204, 205). -->
+> **Note**: The Streamlit dashboard is the primary supported interface for this release. The CLI (`main.py`) is temporarily disabled while cloud and network scan pipelines are being unified.
 
-# Limitations
-<!-- Document known boundaries: static analysis heuristics rather than full AST dataflow/taint tracking, same-file constant resolution rather than cross-file symbol resolution, and offline schema validation scope. -->
+```bash
+streamlit run dashboard.py
+```
+
+### 3. Run the Test Suite
+
+```bash
+python -m pytest tests -v
+```
+
+---
+
+## 📖 Documentation
+
+For detailed architecture diagrams, cryptographic threat models, CBOM schema mappings, and hackathon presentation notes, see:
+
+* **[Comprehensive Documentation](docs/README.md)**: Full architecture breakdown, scoring metrics, and cryptographic risk classifications.
+* **[Developer Setup & Architecture](docs/DEV_SETUP.md)**: Development guidelines, environment configuration, and test suites.
+
+---
+
+## 🛡️ Core Capabilities
+
+* **Multi-Vector Discovery**: Static analysis of Go, Python, Java source code, AWS cloud posture exports (KMS, ALB, ACM), and packet captures.
+* **CycloneDX 1.6 CBOM Export**: Generates compliant Cryptography Bill of Materials with deterministic component references, full evidence chains, and risk ratings.
+* **Quantum Risk Engine**: Rigorously categorizes cryptographic algorithms into `Critical`, `Medium`, `Safe`, and `Unknown` based on Shor's and Grover's quantum threat specifications.
