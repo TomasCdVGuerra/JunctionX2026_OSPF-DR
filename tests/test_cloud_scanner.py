@@ -350,7 +350,11 @@ def test_acm_invalid_signature_algorithm(signature_algorithm):
 
 
 def test_elb_listener_protocols():
-    findings = scan(CLOUD_DIR / "load_balancer_listeners.json")
+    findings = [
+        finding
+        for finding in scan(CLOUD_DIR / "load_balancer_listeners.json")
+        if finding.evidence[0].rule_id == "AWS-ELB-LISTENER-PROTOCOL"
+    ]
 
     assert [finding.protocol for finding in findings] == [
         "HTTPS",
@@ -374,7 +378,11 @@ def test_elb_listener_protocols():
 def test_elb_listener_evidence():
     filepath = CLOUD_DIR / "load_balancer_listeners.json"
     original = json.loads(filepath.read_text(encoding="utf-8"))
-    findings = scan(filepath)
+    findings = [
+        finding
+        for finding in scan(filepath)
+        if finding.evidence[0].rule_id == "AWS-ELB-LISTENER-PROTOCOL"
+    ]
 
     expected = [
         (
@@ -554,7 +562,11 @@ def test_missing_policy_map(tmp_path):
 
 def test_elb_policy_protocol_expansion():
     policy_file = CLOUD_DIR.parents[1] / "data" / "elb_policies.json"
-    policy_map = load_elb_policy_map(policy_file)
+    
+    all_policies = load_elb_policy_map(policy_file)
+    policy_name = "ELBSecurityPolicy-FS-1-2-Res-2020-10"
+    policy_map = {policy_name: all_policies[policy_name]}
+    
     filepath = CLOUD_DIR / "load_balancer_listeners.json"
 
     findings = parse_load_balancers(
@@ -573,7 +585,7 @@ def test_elb_policy_protocol_expansion():
         )
     ]
 
-    assert len(findings) == 12
+    assert len(findings) == 16
     assert len(expanded) == 1
 
     finding = expanded[0]
@@ -611,8 +623,17 @@ def test_elb_unknown_policy_does_not_invent_tls_versions():
         Path("policies.json"),
     )
 
-    assert len(findings) == 1
+    assert len(findings) == 2
     assert findings[0].protocol == "HTTPS"
+
+    unknown = findings[1]
+    assert unknown.algorithm_name == "unknown"
+    assert unknown.protocol == "TLS"
+    assert unknown.confidence == "low"
+    assert unknown.key_size is None
+    assert unknown.quantum_risk == QuantumRiskLevel.UNKNOWN
+    assert unknown.classical_risk == QuantumRiskLevel.UNKNOWN
+    assert unknown.evidence[0].rule_id == "AWS-ELB-POLICY-UNMAPPED"
 
 
 def test_elb_policy_map_requires_evidence_filepath():
@@ -626,7 +647,11 @@ def test_elb_policy_map_requires_evidence_filepath():
 
 def test_elb_policy_cipher_expansion():
     policy_file = CLOUD_DIR.parents[1] / "data" / "elb_policies.json"
-    policy_map = load_elb_policy_map(policy_file)
+    
+    all_policies = load_elb_policy_map(policy_file)
+    policy_name = "ELBSecurityPolicy-FS-1-2-Res-2020-10"
+    policy_map = {policy_name: all_policies[policy_name]}
+    
     filepath = CLOUD_DIR / "load_balancer_listeners.json"
 
     findings = parse_load_balancers(
@@ -664,9 +689,12 @@ def test_elb_policy_cipher_expansion():
 
 def test_elb_cipher_evidence():
     policy_file = CLOUD_DIR.parents[1] / "data" / "elb_policies.json"
-    policy_map = load_elb_policy_map(policy_file)
-    filepath = CLOUD_DIR / "load_balancer_listeners.json"
+    
+    all_policies = load_elb_policy_map(policy_file)
     policy_name = "ELBSecurityPolicy-FS-1-2-Res-2020-10"
+    policy_map = {policy_name: all_policies[policy_name]}
+    
+    filepath = CLOUD_DIR / "load_balancer_listeners.json"
 
     findings = parse_load_balancers(
         json.loads(filepath.read_text(encoding="utf-8")),
@@ -699,3 +727,252 @@ def test_elb_cipher_evidence():
         assert json.loads(finding.evidence[1].matched_snippet) == (
             policy_map[policy_name]
         )
+
+
+def test_policy_map_covers_dataset():
+    policy_file = CLOUD_DIR.parents[1] / "data" / "elb_policies.json"
+    policy_map = load_elb_policy_map(policy_file)
+
+    data = json.loads(
+        (CLOUD_DIR / "load_balancer_listeners.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    referenced_policies = {
+        listener["SslPolicy"]
+        for load_balancer in data["LoadBalancers"]
+        for listener in load_balancer["Listeners"]
+        if "SslPolicy" in listener
+    }
+
+    assert len(referenced_policies) == 5
+    assert referenced_policies <= policy_map.keys()
+
+
+def test_full_elb_policy_expansion():
+    policy_file = CLOUD_DIR.parents[1] / "data" / "elb_policies.json"
+    policy_map = load_elb_policy_map(policy_file)
+    filepath = CLOUD_DIR / "load_balancer_listeners.json"
+
+    findings = parse_load_balancers(
+        json.loads(filepath.read_text(encoding="utf-8")),
+        filepath,
+        policy_map,
+        policy_file,
+    )
+
+    protocols = [
+        finding
+        for finding in findings
+        if any(
+            evidence.rule_id == "AWS-ELB-POLICY-PROTOCOL"
+            for evidence in finding.evidence
+        )
+    ]
+
+    ciphers = [
+        finding
+        for finding in findings
+        if any(
+            evidence.rule_id == "AWS-ELB-POLICY-CIPHER"
+            for evidence in finding.evidence
+        )
+    ]
+
+    assert len(findings) == 79
+    assert len(protocols) == 9
+    assert len(ciphers) == 63
+
+    assert [finding.protocol for finding in protocols] == [
+        "TLSv1.2", "TLSv1.1", "TLSv1.0",
+        "TLSv1.2", "TLSv1.1",
+        "TLSv1.2",
+        "TLSv1.3", "TLSv1.2",
+        "TLSv1.2",
+    ]
+
+    for finding in protocols + ciphers:
+        assert finding.observation == "configured"
+        assert len(finding.evidence) == 2
+        assert finding.quantum_risk == QuantumRiskLevel.UNKNOWN
+        assert finding.classical_risk == QuantumRiskLevel.UNKNOWN
+
+
+def test_scan_expands_elb_policies():
+    findings = scan(CLOUD_DIR / "load_balancer_listeners.json")
+
+    assert len(findings) == 79
+
+    rule_counts = {
+        "AWS-ELB-LISTENER-PROTOCOL": 0,
+        "AWS-ELB-POLICY-PROTOCOL": 0,
+        "AWS-ELB-POLICY-CIPHER": 0,
+    }
+
+    for finding in findings:
+        for evidence in finding.evidence:
+            if evidence.rule_id in rule_counts:
+                rule_counts[evidence.rule_id] += 1
+
+    assert rule_counts == {
+        "AWS-ELB-LISTENER-PROTOCOL": 7,
+        "AWS-ELB-POLICY-PROTOCOL": 9,
+        "AWS-ELB-POLICY-CIPHER": 63,
+    }
+
+
+def test_scan_finds_policy_map_from_another_directory(tmp_path, monkeypatch):
+    filepath = CLOUD_DIR / "load_balancer_listeners.json"
+
+    monkeypatch.chdir(tmp_path)
+
+    findings = scan(filepath)
+
+    assert len(findings) == 79
+    assert any(
+        finding.protocol == "TLSv1.3"
+        for finding in findings
+    )
+
+
+def test_scan_cloud_directory():
+    findings = scan(CLOUD_DIR)
+
+    assert len(findings) == 99
+
+    assert sum(
+        finding.asset_type == AssetType.KEY
+        for finding in findings
+    ) == 10
+
+    assert sum(
+        finding.asset_type == AssetType.CERTIFICATE
+        for finding in findings
+    ) == 5
+
+    assert sum(
+        finding.asset_type == AssetType.ALGORITHM
+        for finding in findings
+    ) == 68
+
+    assert sum(
+        finding.asset_type == AssetType.PROTOCOL
+        for finding in findings
+    ) == 16
+
+
+def test_scan_empty_directory(tmp_path):
+    assert scan(tmp_path) == []
+
+
+def test_scan_directory_includes_nested_exports(tmp_path):
+    nested = tmp_path / "exports"
+    nested.mkdir()
+
+    filepath = nested / "kms.json"
+    filepath.write_text(
+        json.dumps({"Keys": [{"KeySpec": "RSA_2048"}]}),
+        encoding="utf-8",
+    )
+
+    findings = scan(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].algorithm_name == "RSA"
+    assert findings[0].evidence[0].file_path == str(filepath)
+
+
+def test_scan_directory_rejects_corrupt_json(tmp_path):
+    filepath = tmp_path / "broken.json"
+    filepath.write_text('{"Keys": [', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="JSON inválido"):
+        scan(tmp_path)
+
+
+def test_scan_directory_rejects_unsupported_export(tmp_path):
+    filepath = tmp_path / "other.json"
+    filepath.write_text('{"OtherResources": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ainda não suportado"):
+        scan(tmp_path)
+
+
+def test_elb_missing_policy_is_explicit():
+    listener = {"Protocol": "HTTPS", "Port": 443}
+
+    findings = parse_load_balancers(
+        {"LoadBalancers": [{"Listeners": [listener]}]},
+        Path("elb.json"),
+        {},
+        Path("policies.json"),
+    )
+
+    assert len(findings) == 2
+
+    unknown = findings[1]
+    assert unknown.algorithm_name == "unknown"
+    assert unknown.confidence == "low"
+    assert unknown.evidence[0].rule_id == "AWS-ELB-POLICY-MISSING"
+    assert unknown.evidence[0].json_path == (
+        "$.LoadBalancers[0].Listeners[0]"
+    )
+    assert json.loads(unknown.evidence[0].matched_snippet) == listener
+
+
+@pytest.mark.parametrize("policy_name", ["", "   ", 42, []])
+def test_elb_invalid_policy_name(policy_name):
+    with pytest.raises(ValueError, match="SslPolicy"):
+        parse_load_balancers(
+            {
+                "LoadBalancers": [
+                    {
+                        "Listeners": [
+                            {
+                                "Protocol": "HTTPS",
+                                "SslPolicy": policy_name,
+                            }
+                        ]
+                    }
+                ]
+            },
+            Path("elb.json"),
+            {},
+            Path("policies.json"),
+        )
+
+
+def test_cloud_listener_certificate_references():
+    findings = scan(CLOUD_DIR)
+
+    certificates = {}
+
+    for finding in findings:
+        if finding.asset_type == AssetType.CERTIFICATE:
+            resource = json.loads(finding.evidence[0].matched_snippet)
+            certificates[resource["CertificateArn"]] = resource
+
+    listeners = [
+        json.loads(finding.evidence[0].matched_snippet)
+        for finding in findings
+        if finding.evidence[0].rule_id == "AWS-ELB-LISTENER-PROTOCOL"
+    ]
+
+    assert len(certificates) == 5
+    assert len(listeners) == 7
+
+    reference_count = 0
+
+    for listener in listeners:
+        for reference in listener.get("Certificates", []):
+            certificate_arn = reference["CertificateArn"]
+
+            assert certificate_arn in certificates
+
+            certificate = certificates[certificate_arn]
+            assert listener["ListenerArn"] in certificate["InUseBy"]
+
+            reference_count += 1
+
+    assert reference_count == 5
