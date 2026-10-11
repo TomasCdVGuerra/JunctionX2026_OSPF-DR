@@ -359,3 +359,18 @@ def test_cbom_bom_ref_unique_across_different_lines_and_duplicates():
     refs = [c["bom-ref"] for c in s.document["components"]]
     assert len(refs) == 3
     assert len(set(refs)) == 3, f"All bom-ref IDs in BOM document must be unique, got: {refs}"
+
+
+def test_cbom_preserves_classical_risk_property(cyclonedx_schema):
+    """Verify cryptotrace:classicalRisk is serialized and schema-valid."""
+    serializer = CBOMSerializer()
+    serializer.add_finding({
+        "canonical_algorithm": "RSA-2048",
+        "risk_rating": "Critical",
+        "classical_risk": "Safe",
+    })
+    comp = serializer.document["components"][0]
+    props = {p["name"]: p["value"] for p in comp["properties"]}
+    assert props["cryptotrace:classicalRisk"] == "Safe"
+    assert props["cryptotrace:riskRating"] == "Critical"
+    jsonschema.validate(instance=serializer.document, schema=cyclonedx_schema)

@@ -51,10 +51,38 @@ except ImportError:  # pragma: no cover
     pcap_scanner = None  # type: ignore[assignment]
 
 try:
-    from scanner.report import calculate_hygiene_score, calculate_posture_status
+    from scanner.report import (
+        build_report_summary,
+        calculate_hygiene_score,
+        calculate_posture_status,
+        calculate_quantum_risk_score,
+        generate_summary_counts,
+        group_by_algorithm,
+        group_by_source,
+    )
 except ImportError:  # pragma: no cover
+    build_report_summary = None  # type: ignore[assignment]
     calculate_hygiene_score = None  # type: ignore[assignment]
     calculate_posture_status = None  # type: ignore[assignment]
+    calculate_quantum_risk_score = None  # type: ignore[assignment]
+    generate_summary_counts = None  # type: ignore[assignment]
+    group_by_algorithm = None  # type: ignore[assignment]
+    group_by_source = None  # type: ignore[assignment]
+
+try:
+    from scanner.risk import (
+        build_reasoning,
+        enrich_finding_risk,
+        evaluate_risk,
+        is_classically_broken,
+        map_nist_standard,
+    )
+except ImportError:  # pragma: no cover
+    build_reasoning = None  # type: ignore[assignment]
+    enrich_finding_risk = None  # type: ignore[assignment]
+    evaluate_risk = None  # type: ignore[assignment]
+    is_classically_broken = None  # type: ignore[assignment]
+    map_nist_standard = None  # type: ignore[assignment]
 
 
 def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
@@ -362,6 +390,20 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     if risk_rating != "unknown":
         risk_rating = risk_rating.capitalize()
 
+    classical_risk = property_value("cryptotrace:classicalRisk")
+    if classical_risk != "unknown":
+        classical_risk = classical_risk.capitalize()
+    else:
+        algo_name = str(component.get("name") or "")
+        if is_classically_broken is not None and is_classically_broken(algo_name):
+            classical_risk = "Critical"
+        elif risk_rating == "Critical":
+            classical_risk = "Medium" if "1024" in algo_name else "Safe"
+        elif risk_rating in ("Medium", "Safe"):
+            classical_risk = "Safe"
+        else:
+            classical_risk = "Unknown"
+
     source_type = property_value("cryptotrace:sourceType")
     source_path = property_value("cryptotrace:sourcePath")
     operation = property_value("cryptotrace:operation")
@@ -397,9 +439,24 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     elif scanner_source == "unknown" and "scanner_source" in component:
         scanner_source = str(component["scanner_source"])
 
+    nist_standard = evidence.get("NIST Standard", "unknown")
+    if nist_standard == "unknown":
+        nist_standard = property_value("cryptotrace:nistStandard")
+    if nist_standard == "unknown" and map_nist_standard is not None:
+        mapped = map_nist_standard(str(component.get("name") or ""))
+        if mapped != "none":
+            nist_standard = mapped
+
+    description = _normalise(component.get("description"))
+    if description == "unknown" and build_reasoning is not None:
+        description = build_reasoning(str(component.get("name") or ""))
+
+
     row = {
         "Algorithm": _normalise(component.get("name")),
         "Risk Rating": risk_rating,
+        "Quantum Risk": risk_rating,
+        "Classical Risk": classical_risk,
         "Scanner source": scanner_source,
         "Source Type": source_type,
         "Source Path": source_path,
@@ -416,12 +473,9 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
             "unknown",
         ),
         "Rule ID": evidence.get("Rule ID", "unknown"),
-        "NIST Standard": evidence.get(
-            "NIST Standard",
-            "unknown",
-        ),
+        "NIST Standard": nist_standard,
         "BOM Reference": _normalise(component.get("bom-ref")),
-        "Description": _normalise(component.get("description")),
+        "Description": description,
     }
 
     for key, value in native_properties.items():
@@ -430,6 +484,8 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
     for key, value in properties.items():
         if key.startswith("cryptotrace:") and key not in {
             "cryptotrace:riskRating",
+            "cryptotrace:classicalRisk",
+            "cryptotrace:nistStandard",
             "cryptotrace:sourceType",
             "cryptotrace:sourcePath",
             "cryptotrace:operation",
@@ -506,12 +562,35 @@ def load_findings_dataframe(
             ev_list = component.evidence
             first_ev = ev_list[0] if ev_list else None
             q_risk = getattr(component, "quantum_risk", None)
+            c_risk = getattr(component, "classical_risk", None)
             c_func = getattr(component, "crypto_function", None)
+            q_risk_str = (
+                q_risk.value if q_risk is not None and hasattr(q_risk, "value") else str(q_risk or "unknown")
+            ).capitalize()
+            c_risk_str = (
+                c_risk.value if c_risk is not None and hasattr(c_risk, "value") else str(c_risk or "unknown")
+            ).capitalize()
+            algo_str = str(getattr(component, "algorithm_name", "") or "")
+            if c_risk_str == "Unknown":
+                if is_classically_broken is not None and is_classically_broken(algo_str):
+                    c_risk_str = "Critical"
+                elif q_risk_str == "Critical":
+                    c_risk_str = "Medium" if "1024" in algo_str else "Safe"
+                elif q_risk_str in ("Medium", "Safe"):
+                    c_risk_str = "Safe"
+            reasoning_str = _normalise(getattr(first_ev, "risk_reasoning", None))
+            if reasoning_str == "unknown" and build_reasoning is not None:
+                reasoning_str = build_reasoning(algo_str)
+            nist_str = _normalise(getattr(first_ev, "nist_standard", None))
+            if nist_str == "unknown" and map_nist_standard is not None:
+                mapped = map_nist_standard(algo_str)
+                if mapped != "none":
+                    nist_str = mapped
             rows.append({
                 "Algorithm": _normalise(getattr(component, "algorithm_name", None)),
-                "Risk Rating": (
-                    q_risk.value if q_risk is not None and hasattr(q_risk, "value") else str(q_risk or "unknown")
-                ).capitalize(),
+                "Risk Rating": q_risk_str,
+                "Quantum Risk": q_risk_str,
+                "Classical Risk": c_risk_str,
                 "Scanner source": "unknown",
                 "Source Type": _normalise(getattr(component, "source_type", None)),
                 "Source Path": getattr(first_ev, "file_path", "unknown") if first_ev else "unknown",
@@ -523,14 +602,16 @@ def load_findings_dataframe(
                 "Line Number": str(getattr(first_ev, "line_number", "unknown")),
                 "Matched Snippet": _normalise(getattr(first_ev, "matched_snippet", None)),
                 "Rule ID": _normalise(getattr(first_ev, "rule_id", None)),
-                "NIST Standard": _normalise(getattr(first_ev, "nist_standard", None)),
+                "NIST Standard": nist_str,
                 "BOM Reference": "unknown",
-                "Description": _normalise(getattr(first_ev, "risk_reasoning", None)),
+                "Description": reasoning_str,
             })
 
     columns = [
         "Algorithm",
         "Risk Rating",
+        "Quantum Risk",
+        "Classical Risk",
         "Scanner source",
         "Source Type",
         "Source Path",
@@ -574,7 +655,10 @@ def _style_dataframe(dataframe):
     if style_function is None:
         return dataframe
 
-    return style_function(_risk_css, subset=["Risk Rating"])
+    target_cols = [c for c in ("Risk Rating", "Quantum Risk", "Classical Risk") if c in dataframe.columns]
+    if target_cols:
+        return style_function(_risk_css, subset=target_cols)
+    return dataframe
 
 
 def _safe_text_columns(dataframe):
@@ -604,80 +688,253 @@ def render_cli_fallback_notice() -> None:
     )
 
 
-def _render_metrics(full_dataframe) -> None:
-    """Render decoupled Hygiene vs Posture metrics from the full CBOM."""
+def _report_findings_from_cbom(
+    cbom: dict[str, Any] | list[Any],
+) -> list[dict[str, Any]]:
+    """Convert active CBOM or components into standardized findings expected by scanner.report."""
+    if isinstance(cbom, list):
+        components = cbom
+    elif isinstance(cbom, dict):
+        components = cbom.get("components", [])
+    else:
+        components = []
+
+    if not isinstance(components, list):
+        components = []
+
+    report_findings: list[dict[str, Any]] = []
+    for component in components:
+        if isinstance(component, dict):
+            props = _extract_properties(component.get("properties", []))
+            ev = _extract_evidence(component)
+
+            algo_name = (
+                component.get("name")
+                or component.get("algorithm_name")
+                or component.get("canonical_algorithm")
+                or component.get("algorithm")
+                or "Unknown"
+            )
+
+            q_risk = (
+                props.get("cryptotrace:riskRating")
+                or component.get("quantum_risk")
+                or component.get("risk_rating")
+                or component.get("risk")
+                or "Unknown"
+            )
+            if hasattr(q_risk, "value"):
+                q_risk = q_risk.value
+            q_risk_str = str(q_risk).strip().capitalize() if q_risk else "Unknown"
+
+            c_risk = (
+                props.get("cryptotrace:classicalRisk")
+                or component.get("classical_risk")
+                or None
+            )
+            if c_risk is not None and hasattr(c_risk, "value"):
+                c_risk = c_risk.value
+            if c_risk:
+                c_risk_str = str(c_risk).strip().capitalize()
+            else:
+                if is_classically_broken is not None and is_classically_broken(algo_name):
+                    c_risk_str = "Critical"
+                elif q_risk_str == "Critical":
+                    c_risk_str = "Medium" if "1024" in algo_name else "Safe"
+                elif q_risk_str in ("Medium", "Safe"):
+                    c_risk_str = "Safe"
+                else:
+                    c_risk_str = "Unknown"
+
+            source_type = (
+                props.get("cryptotrace:sourceType")
+                or component.get("source_type")
+                or "unknown"
+            )
+            if hasattr(source_type, "value"):
+                source_type = source_type.value
+
+            source_path = (
+                props.get("cryptotrace:sourcePath")
+                or ev.get("Source Path")
+                or component.get("source_path")
+                or component.get("file_path")
+                or "unknown"
+            )
+
+            reasoning = (
+                component.get("description")
+                or component.get("explanation")
+                or component.get("reasoning")
+                or None
+            )
+            if (not reasoning or reasoning == "unknown") and build_reasoning is not None:
+                reasoning = build_reasoning(algo_name)
+
+            nist_std = (
+                props.get("cryptotrace:nistStandard")
+                or ev.get("NIST Standard")
+                or component.get("nist_standard")
+                or None
+            )
+            if (not nist_std or nist_std in ("unknown", "none")) and map_nist_standard is not None:
+                mapped = map_nist_standard(algo_name)
+                nist_std = mapped if mapped != "none" else None
+
+
+            qv_val = props.get("cryptotrace:quantumVulnerable", component.get("quantum_vulnerable"))
+            if qv_val is not None:
+                q_vuln = str(qv_val).lower() == "true"
+            else:
+                q_vuln = q_risk_str == "Critical"
+
+            qs_val = props.get("cryptotrace:quantumSafe", component.get("quantum_safe"))
+            if qs_val is not None:
+                q_safe = str(qs_val).lower() == "true"
+            else:
+                q_safe = q_risk_str == "Safe"
+
+            evidence_items = component.get("evidence") or [
+                {
+                    "file_path": str(source_path),
+                    "line_number": ev.get("Line Number") or component.get("line_number"),
+                    "matched_snippet": ev.get("Matched Snippet") or component.get("matched_snippet"),
+                    "rule_id": ev.get("Rule ID") or component.get("rule_id"),
+                    "risk_reasoning": reasoning,
+                    "nist_standard": nist_std,
+                }
+            ]
+
+            report_findings.append({
+                "algorithm_name": str(algo_name),
+                "canonical_algorithm": str(algo_name),
+                "quantum_risk": q_risk_str.lower(),
+                "risk_rating": q_risk_str,
+                "classical_risk": c_risk_str,
+                "source_type": str(source_type),
+                "source_path": str(source_path),
+                "evidence": evidence_items,
+                "reasoning": reasoning or "unknown",
+                "explanation": reasoning or "unknown",
+                "nist_standard": nist_std or "none",
+                "quantum_vulnerable": q_vuln,
+                "quantum_safe": q_safe,
+            })
+        elif hasattr(component, "algorithm_name"):
+            q_risk = getattr(component, "quantum_risk", None)
+            c_risk = getattr(component, "classical_risk", None)
+            q_risk_str = getattr(q_risk, "value", str(q_risk or "unknown")).capitalize()
+            c_risk_str = getattr(c_risk, "value", str(c_risk or "unknown")).capitalize()
+
+            ev_list = getattr(component, "evidence", [])
+            first_ev = ev_list[0] if ev_list else None
+            source_path = getattr(first_ev, "file_path", "unknown") if first_ev else "unknown"
+            reasoning = getattr(first_ev, "risk_reasoning", None) if first_ev else None
+            nist_std = getattr(first_ev, "nist_standard", None) if first_ev else None
+
+            report_findings.append({
+                "algorithm_name": component.algorithm_name,
+                "canonical_algorithm": component.algorithm_name,
+                "quantum_risk": q_risk_str.lower(),
+                "risk_rating": q_risk_str,
+                "classical_risk": c_risk_str,
+                "source_type": getattr(component.source_type, "value", str(component.source_type)),
+                "source_path": source_path,
+                "evidence": [ev.model_dump() for ev in ev_list] if ev_list and hasattr(ev_list[0], "model_dump") else ev_list,
+                "reasoning": reasoning or "unknown",
+                "explanation": reasoning or "unknown",
+                "nist_standard": nist_std or "none",
+                "quantum_vulnerable": q_risk_str == "Critical",
+                "quantum_safe": q_risk_str == "Safe",
+            })
+
+    return report_findings
+
+
+def _render_metrics(full_dataframe, summary: dict[str, Any] | None = None) -> None:
+    """Render decoupled Hygiene vs Posture metrics and centralized Quantum Risk Score."""
     total_assets = len(full_dataframe)
     if total_assets == 0:
         st.info("Run a scan to see results")
         return
 
-    counts = (
-        full_dataframe["Risk Rating"]
-        .value_counts()
-        .reindex(RISK_ORDER, fill_value=0)
-        .to_dict()
-    )
-
-    crit_count = int(counts.get("Critical", 0))
-    med_count = int(counts.get("Medium", 0))
-    safe_count = int(counts.get("Safe", 0))
-
-    vuln_series = full_dataframe["Quantum Vulnerable"].astype(str).str.lower()
-    vuln_count = int((vuln_series == "true").sum())
-
-    if calculate_hygiene_score is not None:
-        hygiene_score = calculate_hygiene_score(
-            [{"quantum_risk": r} for r in full_dataframe["Risk Rating"]]
-        )
-    else:
-        hygiene_score = max(
-            0,
-            int(100 - (crit_count * CRIT_WEIGHT + med_count * MED_WEIGHT) / total_assets),
-        )
-
-    if calculate_posture_status is not None:
-        raw_status = calculate_posture_status(
-            [
+    if summary is None:
+        if build_report_summary is not None:
+            findings = [
                 {
-                    "quantum_risk": row["Risk Rating"],
-                    "quantum_vulnerable": str(row["Quantum Vulnerable"]).lower() == "true",
+                    "quantum_risk": row.get("Quantum Risk", row.get("Risk Rating", "Unknown")),
+                    "algorithm_name": row.get("Algorithm", "Unknown"),
+                    "source_type": row.get("Source Type", "unknown"),
+                    "quantum_vulnerable": str(row.get("Quantum Vulnerable", "")).lower() == "true",
                 }
                 for _, row in full_dataframe.iterrows()
             ]
-        )
-        posture_map = {
-            "FAILING": "🚨 FAILING",
-            "AT_RISK": "⚠️ AT RISK",
-            "SECURE": "✅ SECURE",
-            "NO_DATA": "ℹ️ NO DATA",
-        }
-        posture_status = posture_map.get(raw_status, "ℹ️ NO DATA")
-    else:
-        if crit_count > 0:
-            posture_status = "🚨 FAILING"
-        elif vuln_count > 0:
-            posture_status = "⚠️ AT RISK"
+            summary = build_report_summary(findings)
         else:
-            posture_status = "✅ SECURE"
+            crit_count = int((full_dataframe["Risk Rating"] == "Critical").sum())
+            med_count = int((full_dataframe["Risk Rating"] == "Medium").sum())
+            safe_count = int((full_dataframe["Risk Rating"] == "Safe").sum())
+            unk_count = int((full_dataframe["Risk Rating"] == "Unknown").sum())
+            summary = {
+                "risk_score": round(((crit_count * 1.0 + med_count * 0.3) / total_assets) * 100.0, 2),
+                "hygiene_score": max(0, int(100 - (crit_count * 100.0 + med_count * 30.0) / total_assets)),
+                "posture_status": "FAILING" if crit_count > 0 else ("AT_RISK" if med_count > 0 else "SECURE"),
+                "counts": {
+                    "Critical": crit_count,
+                    "Medium": med_count,
+                    "Safe": safe_count,
+                    "Unknown": unk_count,
+                    "Total": total_assets,
+                },
+                "total_findings": total_assets,
+            }
 
-    columns = st.columns(5)
-    columns[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
-    columns[1].metric("Posture Status", posture_status)
-    columns[2].metric("Critical", crit_count)
-    columns[3].metric("Medium", med_count)
-    columns[4].metric("Safe", safe_count)
+    counts = summary.get("counts", {})
+    crit_count = counts.get("Critical", 0)
+    med_count = counts.get("Medium", 0)
+    safe_count = counts.get("Safe", 0)
+    unk_count = counts.get("Unknown", 0)
+    total_count = summary.get("total_findings", total_assets)
+    hygiene_score = summary.get("hygiene_score", 100)
+    risk_score = summary.get("risk_score", 0.0)
+    raw_status = summary.get("posture_status", "NO_DATA")
+
+    posture_map = {
+        "FAILING": "🚨 FAILING",
+        "AT_RISK": "⚠️ AT RISK",
+        "SECURE": "✅ SECURE",
+        "NO_DATA": "ℹ️ NO DATA",
+    }
+    posture_status = posture_map.get(raw_status, f"• {raw_status}")
+
+    # Row 1: 3 primary executive indicators
+    row1_cols = st.columns(3)
+    row1_cols[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
+    row1_cols[1].metric(
+        "Quantum Risk Score",
+        f"{risk_score:.2f}/100" if isinstance(risk_score, (int, float)) else f"{risk_score}/100",
+    )
+    row1_cols[2].metric("Posture Status", posture_status)
+
+    # Row 2: 5 granular counts
+    row2_cols = st.columns(5)
+    row2_cols[0].metric("Critical", crit_count)
+    row2_cols[1].metric("Medium", med_count)
+    row2_cols[2].metric("Safe", safe_count)
+    row2_cols[3].metric("Unknown", unk_count)
+    row2_cols[4].metric("Total Findings", total_count)
 
     st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
-    st.caption("Hygiene = share of healthy assets. Posture fails if any Critical finding exists.")
+    st.info("Executive metrics use the full active scan; filters affect only the detailed view.")
 
     if crit_count > 0:
         st.error(
-            f"**MIGRATION REQUIRED:** {crit_count} Critical findings use cryptography vulnerable to quantum attacks.",
+            f"**MIGRATION REQUIRED:** {crit_count} Critical findings use cryptography vulnerable to Shor's algorithm or known classical breaks.",
             icon="🚨",
         )
-    elif vuln_count > 0:
+    elif med_count > 0:
         st.warning(
-            f"**QUANTUM EXPOSURE:** {vuln_count} assets use cryptography vulnerable to quantum attacks.",
+            f"**QUANTUM EXPOSURE:** {med_count} Medium findings provide reduced security under Grover's algorithm.",
             icon="⚠️",
         )
 
@@ -1428,7 +1685,55 @@ def render_dashboard(
 
         filtered_dataframe = filtered_dataframe[search_mask]
 
-    _render_metrics(dataframe)
+    report_findings = _report_findings_from_cbom(cbom)
+    summary = build_report_summary(report_findings) if build_report_summary is not None else None
+
+    _render_metrics(dataframe, summary=summary)
+
+    st.subheader("Executive Risk Report")
+
+    with st.expander("ℹ️ Dual-Axis Risk Model (Quantum Risk vs. Classical Risk)", expanded=False):
+        st.markdown(
+            """
+            QuantumTrace evaluates cryptographic posture along two independent security axes:
+
+            - **Quantum Risk**: Future quantum vulnerability (e.g. exposure to Shor's algorithm for factoring/discrete logs, or Grover's algorithm for symmetric search).
+            - **Classical Risk**: Current pre-quantum cryptographic strength (e.g. exposure to known classical cryptanalysis, collision attacks, or deprecated key sizes).
+
+            **Why can an asset have different risk ratings across axes?**
+            - **RSA-2048**: `Quantum Risk = Critical` (completely broken by Shor's algorithm; must migrate to PQC) while `Classical Risk = Safe` (provides ~112 bits of classical security; not classically broken today).
+            - **RSA-1024**: `Quantum Risk = Critical` while `Classical Risk = Medium` (classically deprecated key length).
+            - **MD5 / SHA-1 / DES**: `Quantum Risk = Critical` and `Classical Risk = Critical` (classically broken via known practical collision/brute-force attacks).
+            - **AES-256-GCM / SHA-384**: `Quantum Risk = Safe` and `Classical Risk = Safe` (maintains ≥128 bits of quantum security against Grover's algorithm).
+            """
+        )
+
+    if summary:
+        col_src, col_algo = st.columns(2)
+        with col_src:
+            st.markdown("#### Findings by Source")
+            by_src = summary.get("by_source_type", {})
+            if by_src:
+                src_df = pd.DataFrame(
+                    [{"Source Type": k, "Count": v} for k, v in by_src.items()]
+                )
+                st.dataframe(src_df, hide_index=True, use_container_width=True)
+            else:
+                st.write("No source data available.")
+
+        with col_algo:
+            st.markdown("#### Findings by Algorithm")
+            by_algo = summary.get("by_algorithm", {})
+            if by_algo:
+                algo_df = pd.DataFrame(
+                    [{"Algorithm": k, "Count": v} for k, v in by_algo.items()]
+                )
+                st.dataframe(algo_df, hide_index=True, use_container_width=True)
+            else:
+                st.write("No algorithm data available.")
+
+        with st.expander("View Full Executive Risk Report (JSON)", expanded=False):
+            st.json(summary)
 
     chart_column, summary_column = st.columns([1, 1])
 
@@ -1455,6 +1760,8 @@ def render_dashboard(
 
     display_columns = [
         "Algorithm",
+        "Quantum Risk",
+        "Classical Risk",
         "Risk Rating",
         "Scanner source",
         "Source Type",
@@ -1464,6 +1771,7 @@ def render_dashboard(
         "Matched Snippet",
         "Rule ID",
         "NIST Standard",
+        "Description",
         "Quantum Vulnerable",
         "Quantum Safe",
     ]
@@ -1481,6 +1789,32 @@ def render_dashboard(
         use_container_width=True,
         hide_index=True,
     )
+
+    with st.expander("🔍 Inspect Finding Evidence & NIST Guidance", expanded=False):
+        if not filtered_dataframe.empty:
+            selected_idx = st.selectbox(
+                "Select finding to inspect",
+                options=list(range(len(filtered_dataframe))),
+                format_func=lambda i: (
+                    f"#{i+1}: {filtered_dataframe.iloc[i].get('Algorithm', 'Unknown')} "
+                    f"({filtered_dataframe.iloc[i].get('Source Path', 'unknown')})"
+                ),
+            )
+            if selected_idx is not None:
+                f_row = filtered_dataframe.iloc[selected_idx]
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write(f"**Algorithm:** {f_row.get('Algorithm')}")
+                    st.write(f"**Quantum Risk:** {f_row.get('Quantum Risk', f_row.get('Risk Rating'))}")
+                    st.write(f"**Classical Risk:** {f_row.get('Classical Risk', 'Unknown')}")
+                    st.write(f"**NIST Standard:** {f_row.get('NIST Standard', 'none')}")
+                    st.write(f"**Operation:** {f_row.get('Operation', 'unknown')}")
+                with col_b:
+                    st.write(f"**Source File:** `{f_row.get('Source Path', 'unknown')}`")
+                    st.write(f"**Line Number:** {f_row.get('Line Number', 'unknown')}")
+                    st.write(f"**Rule ID:** `{f_row.get('Rule ID', 'unknown')}`")
+                    st.write(f"**Matched Snippet:** `{f_row.get('Matched Snippet', 'unknown')}`")
+                st.info(f"**Risk Reasoning:** {f_row.get('Description', 'No description available.')}")
 
     # Findings CSV download button
     st.download_button(

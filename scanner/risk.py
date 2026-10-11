@@ -21,6 +21,7 @@ Distinction Example:
 from __future__ import annotations
 
 import re
+from typing import Any, overload
 
 from scanner.models import CryptoFinding, QuantumRiskLevel
 
@@ -616,8 +617,23 @@ def build_reasoning(
     return reasoning
 
 
+@overload
 def enrich_finding_risk(finding: CryptoFinding) -> CryptoFinding:
-    """Enrich a CryptoFinding instance with centralized quantum and classical risk evaluations.
+    ...
+
+
+@overload
+def enrich_finding_risk(finding: dict[str, Any]) -> dict[str, Any]:
+    ...
+
+
+@overload
+def enrich_finding_risk(finding: Any) -> Any:
+    ...
+
+
+def enrich_finding_risk(finding: Any) -> Any:
+    """Enrich a CryptoFinding instance or dictionary with centralized quantum and classical risk evaluations.
 
     Risk Dimensions:
     - quantum_risk: Future quantum vulnerability (e.g. Shor's algorithm breaking RSA/ECC
@@ -626,9 +642,19 @@ def enrich_finding_risk(finding: CryptoFinding) -> CryptoFinding:
       MD5/DES/SHA-1 -> CRITICAL, deprecated key sizes like RSA-1024 -> MEDIUM, modern
       primitives like RSA-2048/AES-GCM -> SAFE).
     """
-    algo = finding.algorithm_name
-    key_size = finding.key_size
-    mode = finding.mode
+    if isinstance(finding, dict):
+        algo = str(
+            finding.get("algorithm_name")
+            or finding.get("canonical_algorithm")
+            or finding.get("algorithm")
+            or ""
+        )
+        key_size = finding.get("key_size")
+        mode = finding.get("mode")
+    else:
+        algo = getattr(finding, "algorithm_name", "")
+        key_size = getattr(finding, "key_size", None)
+        mode = getattr(finding, "mode", None)
 
     quantum_risk, _cl_bits, _q_bits, reasoning = evaluate_risk(
         algorithm_name=algo,
@@ -656,6 +682,25 @@ def enrich_finding_risk(finding: CryptoFinding) -> CryptoFinding:
         classical_risk = QuantumRiskLevel.UNKNOWN
 
     nist_std = map_nist_standard(algo)
+
+    if isinstance(finding, dict):
+        if quantum_risk != QuantumRiskLevel.UNKNOWN or finding.get("quantum_risk") in (QuantumRiskLevel.UNKNOWN, "unknown", None):
+            finding["quantum_risk"] = quantum_risk
+            finding["risk_rating"] = quantum_risk.value.capitalize()
+        if classical_risk != QuantumRiskLevel.UNKNOWN or finding.get("classical_risk") in (QuantumRiskLevel.UNKNOWN, "unknown", None):
+            finding["classical_risk"] = classical_risk
+        if not finding.get("explanation") or finding.get("explanation") == "unknown":
+            finding["explanation"] = reasoning
+        if not finding.get("nist_standard") or finding.get("nist_standard") == "none":
+            finding["nist_standard"] = nist_std
+        if finding.get("evidence"):
+            for ev in finding["evidence"]:
+                if isinstance(ev, dict):
+                    if not ev.get("risk_reasoning"):
+                        ev["risk_reasoning"] = reasoning
+                    if (not ev.get("nist_standard") or ev.get("nist_standard") == "none") and nist_std != "none":
+                        ev["nist_standard"] = nist_std
+        return finding
 
     # Do not replace a known, more specific scanner result with a less specific result
     if quantum_risk != QuantumRiskLevel.UNKNOWN or finding.quantum_risk == QuantumRiskLevel.UNKNOWN:
