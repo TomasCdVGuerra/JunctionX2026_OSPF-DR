@@ -12,51 +12,82 @@ QuantumTrace is an automated post-quantum cryptographic discovery and posture ma
 
 ## ⚡ Quickstart
 
-### 1. Installation
+QuantumTrace includes cross-platform bootstrap scripts ([run.sh](run.sh) for macOS/Linux and [run.ps1](run.ps1) for Windows) that automate the entire setup and launch process in a single command.
 
-Windows PowerShell: `./run.ps1` prepares Python 3.13's `.venv`, installs
-`requirements.txt`, checks TShark availability and starts the dashboard.
-Use `./run.ps1 -Mode setup` for setup only or `./run.ps1 -Mode test` for the full suite.
-Linux/macOS: `bash run.sh --ui` (`--setup` / `--test` are also supported).
-TShark/Wireshark is installed separately and is required only for real PCAP scans.
+### Automated Launchers (`run.sh` & `run.ps1`)
 
+Both scripts automatically perform the following steps:
+1. **Directory Alignment**: Resolves to the repository root directory regardless of invocation path.
+2. **Virtual Environment Bootstrap**: Automatically creates a `.venv` using **Python 3.13** (`python3.13` on macOS/Linux, `py -3.13` on Windows) if not present.
+3. **Strict Python 3.13 Check**: Verifies that the `.venv` interpreter strictly matches Python 3.13 (`sys.version_info[:2] == (3, 13)`).
+4. **Dependency Sync**: Automatically installs and syncs dependencies from `requirements.txt`.
+5. **Pre-flight Health Check**: Runs `scripts/check_environment.py` to validate system prerequisites and tool availability.
+6. **Execution by Mode**: Launches the Streamlit dashboard, executes the test suite, or finishes after setup.
+
+#### Linux / macOS ([run.sh](run.sh))
 ```bash
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Launch the Streamlit dashboard (default)
+bash run.sh
+# or explicitly:
+bash run.sh --ui
 
-# Install dependencies
-pip install -r requirements.txt
+# Run the test suite via pytest
+bash run.sh --test
+
+# Setup environment & dependencies only (useful for CI/CD or initial setup)
+bash run.sh --setup
 ```
 
-### 2. Launch the Analytics Dashboard
-
-> **Note**: The Streamlit dashboard is the primary supported interface for this release. The CLI (`main.py`) is temporarily disabled while cloud and network scan pipelines are being unified.
-
-```bash
-streamlit run dashboard.py
-```
-
-PCAP uploads use the real network scanner through `scanner/pcap_scanner.py`.
-Install Wireshark with TShark separately; it is not a Python dependency.
-The scanner searches `TSHARK_PATH`, then `PATH`, then standard Wireshark folders.
-On Windows, if detection fails, set this before starting Streamlit:
-
+#### Windows PowerShell ([run.ps1](run.ps1))
 ```powershell
-$env:TSHARK_PATH = 'C:\Program Files\Wireshark\tshark.exe'
-python -m streamlit run dashboard.py
+# Launch the Streamlit dashboard (default)
+.\run.ps1
+# or explicitly:
+.\run.ps1 -Mode ui
+
+# Run the test suite via pytest
+.\run.ps1 -Mode test
+
+# Setup environment & dependencies only
+.\run.ps1 -Mode setup
 ```
 
-Network findings retain the protocol analyzers' assessments and packet evidence;
-the dashboard does not overwrite them with a primitive-only reassessment.
-Advertised capabilities, negotiated selections and observed plaintext remain
-separate findings. A TShark failure is reported instead of using a silent fallback.
+---
 
-### 3. Run the Test Suite
+### Manual Setup (Alternative)
+
+If you prefer to manage the virtual environment manually:
 
 ```bash
+# 1. Create and activate Python 3.13 virtual environment
+python3.13 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\Activate.ps1
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Verify environment
+python scripts/check_environment.py
+
+# 4. Launch the dashboard
+streamlit run dashboard.py
+
+# 5. Run the test suite
 python -m pytest -q
 ```
+
+---
+
+### Prerequisites & TShark Configuration
+
+* **TShark / Wireshark**: Required only for live PCAP packet captures (it is an external system tool, not a Python package). Code and cloud posture scans do not require TShark.
+* The scanner automatically detects `tshark` via `TSHARK_PATH`, system `PATH`, or standard Wireshark installation directories.
+* On Windows, if TShark is installed in a custom location, set the environment variable before starting:
+  ```powershell
+  $env:TSHARK_PATH = 'C:\Program Files\Wireshark\tshark.exe'
+  .\run.ps1
+  ```
+* Network findings preserve the protocol analyzers' packet-level context and assessments; missing TShark reports an explicit diagnostic warning in the UI rather than silently skipping network data.
 
 ---
 

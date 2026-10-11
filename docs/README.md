@@ -6,21 +6,37 @@ preserva evidências e exporta CSV e CBOM CycloneDX 1.6.
 
 ## Instalação e execução
 
-Todos usam Python 3.13 e as dependências de requirements.txt.
+O projeto disponibiliza scripts de automação cross-platform ([run.sh](../run.sh) para Linux/macOS e [run.ps1](../run.ps1) para Windows) que automatizam todo o ciclo de vida num único comando:
+1. **Alinhamento do diretório**: Navega automaticamente para a raiz do repositório.
+2. **Ambiente virtual**: Cria `.venv` com **Python 3.13** (`py -3.13` ou `python3.13`) se não existir.
+3. **Verificação de versão**: Garante estritamente a execução em Python 3.13 (`sys.version_info[:2] == (3, 13)`).
+4. **Instalação de dependências**: Sincroniza pacotes a partir de `requirements.txt`.
+5. **Verificação de integridade**: Executa `scripts/check_environment.py`.
+6. **Execução por modo**: Inicia o dashboard Streamlit, executa a suite de testes ou conclui o setup.
 
 ```powershell
-# Windows: prepara .venv, instala dependências e inicia o dashboard
+# Windows (PowerShell): prepara ambiente, dependências e inicia o dashboard (modo padrão)
 .\run.ps1
-# Apenas preparar o ambiente
+# Modo explícito:
+.\run.ps1 -Mode ui
+
+# Apenas preparar o ambiente e validar dependências
 .\run.ps1 -Mode setup
-# Preparar o ambiente e executar todos os testes
+
+# Executar a suite completa de testes via pytest
 .\run.ps1 -Mode test
 ```
 
 ```bash
-# Linux/macOS: requer python3.13; também aceita .venv existente em Git Bash
+# Linux/macOS (Bash): prepara ambiente, dependências e inicia o dashboard (modo padrão)
+bash run.sh
+# Modo explícito:
 bash run.sh --ui
+
+# Apenas preparar o ambiente e validar dependências
 bash run.sh --setup
+
+# Executar a suite completa de testes via pytest
 bash run.sh --test
 ```
 
