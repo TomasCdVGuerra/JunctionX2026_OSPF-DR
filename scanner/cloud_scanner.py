@@ -24,6 +24,12 @@ ACM_EC_KEY_ALGORITHMS: dict[str, tuple[str, int]] = {
     "EC_secp521r1": ("EC", 521),
 }
 
+DEFAULT_ELB_POLICY_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "elb_policies.json"
+)
+
 def load_json(filepath: Path) -> dict[str, Any]:
     """Lê um export JSON e garante que a raiz é um objeto."""
     try:
@@ -253,6 +259,28 @@ def parse_symmetric_default(region: str | None,) -> tuple[str, int | None, str |
     return "AES", 256, "GCM"
 
 
+def unknown_elb_policy_finding(listener: dict[str, Any], filepath: Path, location: str, rule_id: str) -> CryptoFinding:
+    """Regista que não conseguimos determinar as capacidades TLS."""
+    return CryptoFinding(
+        algorithm_name="unknown",
+        asset_type=AssetType.ALGORITHM,
+        source_type="cloud-posture",
+        protocol="TLS",
+        observation="configured",
+        confidence="low",
+        evidence=[
+            Evidence(
+                file_path=str(filepath),
+                json_path=location,
+                rule_id=rule_id,
+                matched_snippet=json.dumps(
+                    listener, ensure_ascii=False
+                ),
+            )
+        ],
+    )
+
+
 def expand_elb_policy(listener: dict[str, Any], filepath: Path, location: str, policy_map: dict[str, Any], policy_file: Path) -> list[CryptoFinding]:
     """Extrai protocolos e cipher suites permitidos pela política ELB."""
     if listener.get("Protocol") not in ("HTTPS", "TLS"):
@@ -261,7 +289,14 @@ def expand_elb_policy(listener: dict[str, Any], filepath: Path, location: str, p
     policy_name = listener.get("SslPolicy")
 
     if policy_name is None:
-        return []
+        return [
+            unknown_elb_policy_finding(
+                listener,
+                filepath,
+                location,
+                "AWS-ELB-POLICY-MISSING",
+            )
+        ]
 
     if not isinstance(policy_name, str) or not policy_name.strip():
         raise ValueError(f"SslPolicy inválido em {location} de {filepath}")
@@ -269,7 +304,14 @@ def expand_elb_policy(listener: dict[str, Any], filepath: Path, location: str, p
     policy = policy_map.get(policy_name)
 
     if policy is None:
-        return []
+        return [
+            unknown_elb_policy_finding(
+                listener,
+                filepath,
+                location,
+                "AWS-ELB-POLICY-UNMAPPED",
+            )
+        ]
 
     findings: list[CryptoFinding] = []
 
@@ -418,8 +460,8 @@ def parse_load_balancers(json_data: dict[str, Any], filepath: Path, policy_map: 
     return findings
 
 
-def scan(path: Path) -> list[CryptoFinding]:
-    """Analisa um ficheiro de configuração cloud suportado."""
+def scan_json_file(path: Path) -> list[CryptoFinding]:
+    """Analisa um ficheiro JSON cloud suportado."""
     if path.is_dir():
         raise ValueError(
             "Esperava um ficheiro JSON cloud, mas recebi uma pasta"
@@ -434,6 +476,34 @@ def scan(path: Path) -> list[CryptoFinding]:
         return parse_acm_certificates(json_data, path)
 
     if "LoadBalancers" in json_data:
-        return parse_load_balancers(json_data, path)
+        policy_map = load_elb_policy_map(DEFAULT_ELB_POLICY_FILE)
+
+        return parse_load_balancers(
+            json_data,
+            path,
+            policy_map,
+            DEFAULT_ELB_POLICY_FILE,
+        )
 
     raise ValueError(f"Formato cloud ainda não suportado em {path}")
+
+
+def scan_cloud_directory(directory: Path) -> list[CryptoFinding]:
+    """Analisa os exports JSON de uma pasta e das suas subpastas."""
+    if not directory.is_dir():
+        raise NotADirectoryError(f"Esperava uma pasta: {directory}")
+
+    findings: list[CryptoFinding] = []
+
+    for filepath in sorted(directory.rglob("*.json")):
+        findings.extend(scan_json_file(filepath))
+
+    return findings
+
+
+def scan(path: Path) -> list[CryptoFinding]:
+    """Analisa um ficheiro ou uma pasta de exports cloud."""
+    if path.is_dir():
+        return scan_cloud_directory(path)
+
+    return scan_json_file(path)
