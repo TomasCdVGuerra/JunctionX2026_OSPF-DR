@@ -2,6 +2,7 @@
 
 import json
 from enum import Enum
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import dashboard
@@ -779,4 +780,350 @@ def process(data):
     findings = dashboard._scan_source_file_fallback(py_file)
     assert len(findings) == 0
 
+
+# --- Centralized Reporting and Risk Dashboard Tests ---
+
+def test_screenshot_equivalent_43_findings_calculation():
+    """Regression test: Screenshot-equivalent inventory (32 Critical, 11 Safe) calculations."""
+    from scanner.report import (
+        calculate_hygiene_score,
+        calculate_posture_status,
+        calculate_quantum_risk_score,
+        generate_summary_counts,
+    )
+
+    findings = [
+        *[{"quantum_risk": "critical"} for _ in range(32)],
+        *[{"quantum_risk": "safe"} for _ in range(11)],
+    ]
+
+    assert calculate_quantum_risk_score(findings) == 74.42
+    assert calculate_hygiene_score(findings) == 25
+    assert generate_summary_counts(findings) == {
+        "Critical": 32,
+        "Medium": 0,
+        "Safe": 11,
+        "Unknown": 0,
+        "Total": 43,
+    }
+    assert calculate_posture_status(findings) == "FAILING"
+
+
+def test_report_findings_from_cbom_structure_and_enrichment():
+    """Verify _report_findings_from_cbom extracts all required fields and enriches data."""
+    sample_cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:sourcePath", "value": "auth/rsa.py"},
+                    {"name": "cryptotrace:nistStandard", "value": "FIPS 186-5"},
+                    {"name": "cryptotrace:quantumVulnerable", "value": "true"},
+                    {"name": "cryptotrace:quantumSafe", "value": "false"},
+                ],
+                "evidence": {
+                    "occurrences": [
+                        {
+                            "location": "auth/rsa.py",
+                            "line": 45,
+                            "matchedSnippet": "generate_rsa_key(2048)",
+                            "ruleId": "crypto-rsa",
+                            "nistStandard": "FIPS 186-5",
+                        }
+                    ]
+                },
+            },
+            {
+                "name": "AES-256-GCM",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Safe"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "cloud-posture"},
+                    {"name": "cryptotrace:sourcePath", "value": "kms/config.json"},
+                    {"name": "cryptotrace:quantumVulnerable", "value": "false"},
+                    {"name": "cryptotrace:quantumSafe", "value": "true"},
+                ],
+            },
+        ]
+    }
+
+    report_findings = dashboard._report_findings_from_cbom(sample_cbom)
+    assert len(report_findings) == 2
+
+    rsa_f = report_findings[0]
+    assert rsa_f["algorithm_name"] == "RSA-2048"
+    assert rsa_f["quantum_risk"] == "critical"
+    assert rsa_f["classical_risk"] == "Safe"
+    assert rsa_f["source_type"] == "source-code"
+    assert rsa_f["source_path"] == "auth/rsa.py"
+    assert rsa_f["quantum_vulnerable"] is True
+    assert rsa_f["quantum_safe"] is False
+    assert rsa_f["nist_standard"] == "FIPS 186-5"
+    assert "Shor" in rsa_f["reasoning"]
+
+    aes_f = report_findings[1]
+    assert aes_f["algorithm_name"] == "AES-256-GCM"
+    assert aes_f["quantum_risk"] == "safe"
+    assert aes_f["classical_risk"] == "Safe"
+    assert aes_f["source_type"] == "cloud-posture"
+    assert aes_f["quantum_vulnerable"] is False
+    assert aes_f["quantum_safe"] is True
+
+
+def test_executive_risk_report_json_serializable():
+    """Verify build_report_summary output is fully JSON serializable."""
+    sample_cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                ],
+            },
+            {
+                "name": "AES-256-GCM",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Safe"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "cloud-posture"},
+                ],
+            },
+        ]
+    }
+    report_findings = dashboard._report_findings_from_cbom(sample_cbom)
+    from scanner.report import build_report_summary
+
+    summary = build_report_summary(report_findings)
+    json_str = json.dumps(summary)
+    loaded = json.loads(json_str)
+
+    assert "risk_score" in loaded
+    assert "hygiene_score" in loaded
+    assert "posture_status" in loaded
+    assert "total_findings" in loaded
+    assert "counts" in loaded
+    assert "by_source_type" in loaded
+    assert "by_algorithm" in loaded
+
+
+def test_metrics_remain_independent_of_filters():
+    """Verify executive metrics calculate from the full active inventory, ignoring UI filters."""
+    sample_cbom = {
+        "metadata": {
+            "timestamp": "2026-10-10T16:00:00Z",
+            "tools": [{"name": "Test Scanner", "version": "1.0"}],
+        },
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                ],
+            },
+            {
+                "name": "AES-256-GCM",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Safe"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:sourceType", "value": "cloud-posture"},
+                ],
+            },
+        ],
+    }
+
+    metrics_captured: list[dict[str, Any]] = []
+
+    def mock_render_metrics(full_df, summary=None):
+        metrics_captured.append({
+            "full_df_len": len(full_df),
+            "summary": summary,
+        })
+
+    with patch("dashboard.st") as mock_st, patch("dashboard._render_metrics", side_effect=mock_render_metrics):
+        mock_st.file_uploader.return_value = None
+        # Simulate filter: user selects ONLY "Safe", which filters out RSA-2048
+        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if "Risk level" in label else default
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False
+        mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
+
+        render_dashboard(sample_cbom, cbom_path="test_cbom.json")
+
+        assert len(metrics_captured) == 1
+        captured = metrics_captured[0]
+        # Full dataframe length must be 2, not 1!
+        assert captured["full_df_len"] == 2
+        summary = captured["summary"]
+        assert summary is not None
+        # Counts in executive metrics must reflect the full inventory (Total: 2, Critical: 1, Safe: 1)
+        assert summary["counts"]["Total"] == 2
+        assert summary["counts"]["Critical"] == 1
+        assert summary["counts"]["Safe"] == 1
+
+
+def test_dual_axis_and_reasoning_in_dataframe():
+    """Verify load_findings_dataframe exposes Quantum Risk, Classical Risk, NIST Standard, and Description."""
+    sample_cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Safe"},
+                    {"name": "cryptotrace:nistStandard", "value": "FIPS 186-5"},
+                ],
+                "description": "RSA-2048 is vulnerable to Shor's polynomial-time factoring algorithm.",
+            },
+            {
+                "name": "MD5",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Critical"},
+                ],
+            },
+        ]
+    }
+
+    df = load_findings_dataframe(sample_cbom)
+    assert "Quantum Risk" in df.columns
+    assert "Classical Risk" in df.columns
+    assert "NIST Standard" in df.columns
+    assert "Description" in df.columns
+
+    rsa_row = df[df["Algorithm"] == "RSA-2048"].iloc[0]
+    assert rsa_row["Quantum Risk"] == "Critical"
+    assert rsa_row["Classical Risk"] == "Safe"
+    assert "Shor" in str(rsa_row["Description"])
+
+    md5_row = df[df["Algorithm"] == "MD5"].iloc[0]
+    assert md5_row["Quantum Risk"] == "Critical"
+    assert md5_row["Classical Risk"] == "Critical"
+
+
+def test_unknown_findings_visible_and_counted():
+    """Verify unknown risk findings are counted in Unknown and visible in dataframe."""
+    sample_cbom = {
+        "components": [
+            {
+                "name": "CUSTOM-CIPHER",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Unknown"},
+                    {"name": "cryptotrace:classicalRisk", "value": "Unknown"},
+                ],
+            }
+        ]
+    }
+
+    df = load_findings_dataframe(sample_cbom)
+    assert len(df) == 1
+    assert df.iloc[0]["Risk Rating"] == "Unknown"
+
+    report_findings = dashboard._report_findings_from_cbom(sample_cbom)
+    from scanner.report import build_report_summary
+    summary = build_report_summary(report_findings)
+    assert summary["counts"]["Unknown"] == 1
+    assert summary["counts"]["Total"] == 1
+
+
+def test_empty_findings_render_safely():
+    """Verify empty findings render without crashing."""
+    sample_cbom = {"components": []}
+
+    df = load_findings_dataframe(sample_cbom)
+    assert len(df) == 0
+
+    report_findings = dashboard._report_findings_from_cbom(sample_cbom)
+    assert len(report_findings) == 0
+
+    from scanner.report import build_report_summary
+    summary = build_report_summary(report_findings)
+    assert summary["total_findings"] == 0
+    assert summary["posture_status"] == "NO_DATA"
+
+    with patch("dashboard.st") as mock_st:
+        dashboard._render_metrics(df, summary=summary)
+        mock_st.info.assert_called_with("Run a scan to see results")
+
+
+def test_grouping_matches_scanner_report_helpers():
+    """Verify report summary groupings match group_by_source and group_by_algorithm."""
+    from scanner.report import (
+        build_report_summary,
+        group_by_algorithm,
+        group_by_source,
+    )
+
+    findings = [
+        {"algorithm_name": "RSA-2048", "source_type": "source-code", "quantum_risk": "critical"},
+        {"algorithm_name": "RSA-2048", "source_type": "cloud-posture", "quantum_risk": "critical"},
+        {"algorithm_name": "AES-256-GCM", "source_type": "source-code", "quantum_risk": "safe"},
+    ]
+
+    summary = build_report_summary(findings)
+    assert summary["by_source_type"] == group_by_source(findings)
+    assert summary["by_algorithm"] == group_by_algorithm(findings)
+    assert summary["by_source_type"]["source-code"] == 2
+    assert summary["by_source_type"]["cloud-posture"] == 1
+    assert summary["by_algorithm"]["RSA-2048"] == 2
+    assert summary["by_algorithm"]["AES-256-GCM"] == 1
+
+
+def test_missing_java_scanner_warning_in_uploaded_files():
+    """Verify uploading .java files without a functional java scanner appends a warning."""
+    files = [MockUploadedFile("Service.java", "KeyPairGenerator.getInstance(\"RSA\");")]
+    _cbom, warnings = scan_uploaded_files(files)
+    assert "source-code (Java scanner missing)" in warnings
+
+
+def test_missing_python_scanner_warning_in_uploaded_files():
+    """Verify uploading .py files without a functional python scanner appends a warning."""
+    files = [MockUploadedFile("app.py", "import hashlib\nhashlib.sha1(b'x')")]
+    _cbom, warnings = scan_uploaded_files(files)
+    assert "source-code (Python scanner missing)" in warnings
+
+
+def test_missing_scanner_warnings_in_bundled_data():
+    """Verify scanning bundled data appends warnings when Java/Python scanners are unavailable."""
+    _cbom, warnings = dashboard.scan_bundled_data()
+    assert "source-code (Java scanner missing)" in warnings
+    assert "source-code (Python scanner missing)" in warnings
+
+
+def test_fallback_banner_renders_missing_scanner_warnings():
+    """Verify render_dashboard includes missing scanner warnings in the fallback banner."""
+    cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:scannerSource", "value": "real: scanner.source_scanner"},
+                ],
+            }
+        ]
+    }
+    with patch("dashboard.st") as mock_st:
+        mock_st.session_state = {
+            "scan_warnings": ["source-code (Java scanner missing)"]
+        }
+        mock_st.file_uploader.return_value = None
+        mock_st.multiselect.side_effect = lambda label, options, default: default
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False
+        mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
+
+        render_dashboard(cbom)
+
+        warning_calls = [str(call.args[0]) for call in mock_st.warning.call_args_list if call.args]
+        fallback_warnings = [msg for msg in warning_calls if "Fallback heuristic" in msg]
+        assert len(fallback_warnings) == 1
+        assert "source-code (Java scanner missing)" in fallback_warnings[0]
 

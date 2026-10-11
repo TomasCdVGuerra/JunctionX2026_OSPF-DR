@@ -51,5 +51,10 @@ For detailed architecture diagrams, cryptographic threat models, CBOM schema map
 ## 🛡️ Core Capabilities
 
 * **Multi-Vector Discovery**: Static analysis of Go, Python, Java source code, AWS cloud posture exports (KMS, ALB, ACM), and packet captures.
-* **CycloneDX 1.6 CBOM Export**: Generates compliant Cryptography Bill of Materials with deterministic component references, full evidence chains, and risk ratings.
-* **Quantum Risk Engine**: Rigorously categorizes cryptographic algorithms into `Critical`, `Medium`, `Safe`, and `Unknown` based on Shor's and Grover's quantum threat specifications.
+* **CycloneDX 1.6 CBOM Export**: Generates compliant Cryptography Bill of Materials with deterministic component references, full evidence chains, classical risk tracking (`cryptotrace:classicalRisk`), and risk ratings.
+* **Centralized Risk & Reporting Engine**: Powers the Streamlit dashboard via `scanner/risk.py` and `scanner/report.py`.
+  * **Quantum Risk Score**: An exposure score from 0 to 100 representing quantum vulnerability exposure ($1.0 \times \text{Critical} + 0.3 \times \text{Medium}$).
+  * **Crypto Hygiene**: A health score from 0 to 100 measuring the proportion of safe cryptographic assets.
+  * **Posture Status**: Categorical compliance state: `FAILING` (critical quantum vulnerabilities present), `AT_RISK` (medium quantum exposure), `SECURE` (all cryptography quantum-resistant), or `NO_DATA` (empty inventory).
+  * **Dual-Axis Risk Model**: Explicitly tracks **Quantum Risk** (future exposure to Shor/Grover attacks) and **Classical Risk** (current pre-quantum cryptographic strength). For example, RSA-2048 is `Quantum Risk: Critical` (broken by Shor's algorithm) while `Classical Risk: Safe` (not classically broken).
+  * **Independent Executive Metrics**: Executive metrics are calculated from the complete active scan inventory, ensuring high-level posture remains accurate while search and filter controls narrow detailed tabular views.
