@@ -325,13 +325,17 @@ def build_report_summary(
     risk_score = calculate_quantum_risk_score(findings)
     hygiene_score = calculate_hygiene_score(findings)
     posture_status = calculate_posture_status(findings)
+    classical_counts = generate_summary_counts(findings, "classical_risk")
 
     return {
         "risk_score": risk_score,
         "hygiene_score": hygiene_score,
         "posture_status": posture_status,
         "counts": counts,
-        "classical_counts": generate_summary_counts(findings, "classical_risk"),
+        "classical_counts": classical_counts,
+        "classical_coverage_percent": round(
+            100 * (counts["Total"] - classical_counts["Unknown"]) / counts["Total"], 2
+        ) if counts["Total"] else 0.0,
         "quantum_coverage_percent": round(
             100 * (counts["Total"] - counts["Unknown"]) / counts["Total"], 2
         ) if counts["Total"] else 0.0,

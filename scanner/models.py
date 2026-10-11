@@ -64,6 +64,7 @@ class CryptoFinding(BaseModel):
     padding: str | None = None
     oid: str | None = None
     protocol: str | None = None
+    library: str | None = Field(default=None, min_length=1)
     crypto_function: CryptoFunction = CryptoFunction.UNKNOWN
     observation: Literal["declared", "configured", "advertised", "negotiated", "observed"]
     quantum_risk: QuantumRiskLevel = QuantumRiskLevel.UNKNOWN

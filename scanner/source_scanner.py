@@ -41,6 +41,7 @@ def scan_file(
             logger.warning("Python scanner unavailable; file was not analyzed: %s", file_path)
         except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Python scanner failed on %s: %s", file_path, exc)
+            raise
         return []
 
     if suffix == ".java":
@@ -51,6 +52,7 @@ def scan_file(
             logger.warning("Java scanner unavailable; file was not analyzed: %s", file_path)
         except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Java scanner failed on %s: %s", file_path, exc)
+            raise
         return []
 
     return []
@@ -59,6 +61,7 @@ def scan_file(
 def scan_source_directory(
     directory_path: str | Path,
     base_dir: str | Path | None = None,
+    *, errors: list[str] | None = None,
 ) -> list[CryptoFinding]:
     """Recursively discover and dispatch source code files to language-specific scanners."""
     directory_path = Path(directory_path)
@@ -70,6 +73,11 @@ def scan_source_directory(
 
     for path in sorted(directory_path.rglob("*")):
         if path.is_file() and path.suffix.lower() in {".go", ".py", ".java"}:
-            findings.extend(scan_file(path, base_dir=effective_base))
+            try:
+                findings.extend(scan_file(path, base_dir=effective_base))
+            except Exception as exc:
+                if errors is None:
+                    raise
+                errors.append(f"Error scanning {path.relative_to(effective_base)}: {exc}")
 
     return findings

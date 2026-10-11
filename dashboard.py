@@ -437,6 +437,7 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
         "Source Type": source_type,
         "Source Path": source_path,
         "Operation": operation,
+        "Library / API": properties.get("cryptotrace:library", "N/A"),
         "Quantum Vulnerable": property_value(
             "cryptotrace:quantumVulnerable"
         ),
@@ -711,7 +712,7 @@ def _render_metrics(full_dataframe, summary=None) -> None:
             ]
         )
         posture_map = {
-            "FAILING": "🚨 FAILING",
+            "FAILING": "FAILING",
             "AT_RISK": "⚠️ AT RISK",
             "SECURE": "✅ SECURE",
             "NO_DATA": "ℹ️ NO DATA",
@@ -720,21 +721,39 @@ def _render_metrics(full_dataframe, summary=None) -> None:
         posture_status = posture_map.get(raw_status, "ℹ️ NO DATA")
     else:
         if crit_count > 0:
-            posture_status = "🚨 FAILING"
+            posture_status = "FAILING"
         elif vuln_count > 0:
             posture_status = "⚠️ AT RISK"
         else:
             posture_status = "✅ SECURE"
 
-    columns = st.columns(5)
-    columns[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
-    columns[1].metric("Posture Status", posture_status)
-    columns[2].metric("Quantum Critical", crit_count)
-    columns[3].metric("Quantum Medium", med_count)
-    columns[4].metric("Quantum Safe", safe_count)
+    assessed = total_assets - int(counts.get("Unknown", 0))
+    coverage = 100 * assessed / total_assets
+    risk_score = (summary["risk_score"] if summary is not None else
+                  round(100 * (crit_count + 0.3 * med_count) / assessed, 2) if assessed else 0.0)
+    exposure_columns = st.columns(2)
+    exposure_columns[0].metric("Quantum Risk Score", f"{risk_score:.2f}/100" if assessed else "N/A")
+    exposure_columns[1].metric("Quantum Assessment Coverage", f"{coverage:.2f}%")
+    st.caption(
+        f"Quantum exposure: higher scores mean greater risk among the {assessed}/{total_assets} "
+        "assessed findings. Unknown findings are excluded from the score; zero coverage gives N/A. "
+        "Counts represent cryptographic observations, not unique systems or sessions."
+    )
 
-    st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
-    st.caption("Hygiene reflects classical assessment and coverage; unknown assets are unverified. Quantum Risk and Classical Risk are separate assessments. Posture considers both risks.")
+    columns = st.columns(4)
+    columns[0].metric("Posture Status", posture_status)
+    columns[1].metric("Quantum Critical", crit_count)
+    columns[2].metric("Quantum Medium", med_count)
+    columns[3].metric("Quantum Safe", safe_count)
+
+    st.caption("Posture considers Quantum Risk and Classical Risk. Safe applies to the evaluated criteria, not the security of the entire application.")
+    with st.expander("Classical assessment details", expanded=False):
+        st.metric("Crypto Hygiene", f"{hygiene_score}/100")
+        st.caption(
+            "This heuristic summarizes classical assessment and coverage. "
+            "100/100 does not imply quantum resilience or certify application security. "
+            "Unknown findings do not contribute verified hygiene."
+        )
     classical_critical = int((full_dataframe["Classical Risk"].astype(str).str.lower() == "critical").sum())
     if classical_critical:
         st.error(f"CLASSICAL RISK: {classical_critical} findings require remediation of classical weaknesses.")
@@ -746,7 +765,6 @@ def _render_metrics(full_dataframe, summary=None) -> None:
     if crit_count > 0:
         st.error(
             f"**MIGRATION REQUIRED:** {crit_count} Critical findings use cryptography vulnerable to quantum attacks.",
-            icon="🚨",
         )
     elif vuln_count > 0:
         st.warning(
@@ -995,7 +1013,7 @@ def scan_uploaded_files(
                         _tag_findings_scanner_source(real_results, f"real: {scanner_mod.__name__}")
                         src_findings = real_results if isinstance(real_results, list) else []
 
-                if not real_scanner or (not src_findings and src_path.suffix.lower() != ".go"):
+                if not real_scanner or missing:
                     logger.info("Using FALLBACK heuristic for source-code: %s", orig_name)
                     src_findings = _scan_source_file_fallback(src_path)
 
@@ -1039,7 +1057,8 @@ def scan_bundled_data(
                 scanner_mod, method_name = real_scanner
                 logger.info("Using real scanner: %s (via %s) for source-code", scanner_mod.__name__, method_name)
                 method = getattr(scanner_mod, method_name)
-                src_res = method(sample_repos)
+                src_res = (method(sample_repos, errors=warnings) if scanner_mod is source_scanner
+                           and method_name == "scan_source_directory" else method(sample_repos))
                 if not isinstance(src_res, list):
                     src_res = [src_res] if src_res else []
                 _tag_findings_scanner_source(src_res, f"real: {scanner_mod.__name__}")
@@ -1270,6 +1289,7 @@ def render_dashboard(
         "Source Path",
         "Operation",
         "Line Number",
+        "Library / API",
         "JSON Path",
         "Packet Number",
         "Matched Snippet",

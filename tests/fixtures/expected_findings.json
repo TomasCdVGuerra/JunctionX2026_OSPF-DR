@@ -1,3 +1,51 @@
 {
-  "_comment": "Holds the manually verified, hand-checked ground-truth list of expected cryptographic findings for every sample file in the challenge materials, including AWS cloud posture exports (KMS, ALB, ACM), Python scripts, Java classes, and Go microservices. Used by test_ground_truth.py to verify exact algorithm detection, evidence tracking, and risk classification while guarding against missing findings and false positives."
+  "review_scope": "Nine bundled source files, reviewed from API calls and explicit parameters. A scoped regression oracle, not complete ground truth or a measured whole-project precision/recall score.",
+  "columns": ["line", "algorithm", "operation", "key_size", "mode", "quantum_risk", "classical_risk"],
+  "cases": [
+    {
+      "file": "python/member_credentials.py",
+      "reason": "Two PBKDF2HMAC/SHA256 constructions. Output length is not password entropy; both risk axes remain unknown.",
+      "expected": [[13, "PBKDF2-HMAC-SHA-256", "kdf", null, null, "unknown", "unknown"], [18, "PBKDF2-HMAC-SHA-256", "kdf", null, null, "unknown", "unknown"]]
+    },
+    {
+      "file": "python/report_export.py",
+      "reason": "AES/ECB construction. The key parameter can override the default; size and operation stay unresolved. ECB is classically critical independently of size. PRNG misuse is outside this inventory oracle.",
+      "expected": [[11, "AES", "unknown", null, "ECB", "unknown", "critical"]]
+    },
+    {
+      "file": "python/secure_transfer.py",
+      "reason": "Two inline AESGCM calls with explicit encrypt/decrypt operations. Parameter keys are not resolved across function boundaries.",
+      "expected": [[16, "AES", "encrypt", null, "GCM", "unknown", "unknown"], [21, "AES", "decrypt", null, "GCM", "unknown", "unknown"]]
+    },
+    {
+      "file": "python/artifact_manifest.py",
+      "reason": "SHA384 digest and HMAC-SHA256 construction. compare_digest is a comparison, not another primitive. HMAC key entropy is unresolved.",
+      "expected": [[6, "SHA-384", "digest", null, null, "safe", "safe"], [14, "HMAC-SHA-256", "mac", null, null, "unknown", "unknown"]]
+    },
+    {
+      "file": "java/ReceiptSigner.java",
+      "reason": "RSA-1024 generation and two SHA1withRSA instances initialized for signing and verification. The signature calls do not prove the supplied key size.",
+      "expected": [[12, "RSA", "keygen", 1024, null, "critical", "critical"], [18, "SHA1withRSA", "sign", null, null, "critical", "critical"], [25, "SHA1withRSA", "verify", null, null, "critical", "critical"]]
+    },
+    {
+      "file": "java/BatchExporter.java",
+      "reason": "16-byte UTF-8 AES SecretKeySpec and AES/ECB cipher bound to that key in the same scope. Safe classical key-size assessment does not endorse the hardcoded key or ECB. PRNG misuse is outside this inventory oracle.",
+      "expected": [[13, "AES", "unknown", 128, null, "medium", "safe"], [14, "AES", "encrypt", 128, "ECB", "medium", "critical"]]
+    },
+    {
+      "file": "java/SessionCipher.java",
+      "reason": "AES KeyGenerator explicitly initialized with 256 bits. GCM calls receive independent key parameters; no cross-method size assumption.",
+      "expected": [[18, "AES", "keygen", 256, null, "safe", "safe"], [30, "AES", "encrypt", null, "GCM", "unknown", "unknown"], [39, "AES", "decrypt", null, "GCM", "unknown", "unknown"]]
+    },
+    {
+      "file": "go/release-feed/main.go",
+      "reason": "One SHA1.Sum checksum. Quantum weakened hash and classical collision weakness.",
+      "expected": [[10, "SHA-1", "digest", null, null, "medium", "critical"]]
+    },
+    {
+      "file": "go/agent-enrollment/main.go",
+      "reason": "Ed25519 key generation, one signing call, two verification calls. Safety is scoped to the evaluated primitive.",
+      "expected": [[11, "Ed25519", "keygen", 256, null, "critical", "safe"], [20, "Ed25519", "sign", 256, null, "critical", "safe"], [21, "Ed25519", "verify", 256, null, "critical", "safe"], [25, "Ed25519", "verify", 256, null, "critical", "safe"]]
+    }
+  ]
 }
