@@ -1,0 +1,15 @@
+[tool.ruff]
+exclude = [
+    "support-materials/**",
+]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = [
+    "plotly",
+    "plotly.*",
+]
+ignore_missing_imports = true

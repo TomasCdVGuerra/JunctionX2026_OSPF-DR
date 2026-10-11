@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -15,43 +16,45 @@ try:
     import pandas as pd
     import streamlit as st
 except ImportError:  # pragma: no cover
-    pd = None
-    st = None
+    pd = None  # type: ignore[assignment]
+    st = None  # type: ignore[assignment]
 
 try:
     import plotly.express as px
 except ImportError:  # pragma: no cover
-    px = None
+    px = None  # type: ignore[assignment]
 
 try:
     from scanner.cbom import CBOMSerializer
 except ImportError:  # pragma: no cover
-    CBOMSerializer = None
+    CBOMSerializer = None  # type: ignore[assignment,misc]
+
 
 try:
-    import scanner.cli as scanner_cli
+    from scanner import source_scanner
 except ImportError:  # pragma: no cover
-    scanner_cli = None
+    source_scanner = None  # type: ignore[assignment]
 
 try:
-    import scanner.source_scanner as source_scanner
+    import scanner.json_scanner as json_scanner  # type: ignore[import-not-found] # noqa: PLR0402
 except ImportError:  # pragma: no cover
-    source_scanner = None
+    json_scanner = None  # type: ignore[assignment]
 
 try:
-    import scanner.json_scanner as json_scanner
+    from scanner import cloud_scanner
 except ImportError:  # pragma: no cover
-    json_scanner = None
+    cloud_scanner = None  # type: ignore[assignment]
 
 try:
-    import scanner.cloud_scanner as cloud_scanner
+    from scanner import pcap_scanner
 except ImportError:  # pragma: no cover
-    cloud_scanner = None
+    pcap_scanner = None  # type: ignore[assignment]
 
 try:
-    import scanner.pcap_scanner as pcap_scanner
+    from scanner.report import calculate_hygiene_score, calculate_posture_status
 except ImportError:  # pragma: no cover
-    pcap_scanner = None
+    calculate_hygiene_score = None  # type: ignore[assignment]
+    calculate_posture_status = None  # type: ignore[assignment]
 
 
 def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
@@ -62,7 +65,7 @@ def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
     else:
         try:
             setattr(finding, "Scanner source", source_label)
-            setattr(finding, "scanner_source", source_label)
+            finding.scanner_source = source_label
         except (AttributeError, TypeError, ValueError):
             try:
                 object.__setattr__(finding, "_scanner_source", source_label)
@@ -82,12 +85,12 @@ def _get_finding_scanner_source(finding: Any, default: str = "unknown") -> str:
             if val != "unknown":
                 return val
         return default
-    val = (
+    raw_val: Any = (
         getattr(finding, "Scanner source", None)
         or getattr(finding, "scanner_source", None)
         or getattr(finding, "_scanner_source", None)
     )
-    return str(val) if val is not None else default
+    return str(raw_val) if raw_val is not None else default
 
 
 def _tag_findings_scanner_source(findings: list[Any], source_label: str) -> None:
@@ -506,11 +509,15 @@ def load_findings_dataframe(
             c_func = getattr(component, "crypto_function", None)
             rows.append({
                 "Algorithm": _normalise(getattr(component, "algorithm_name", None)),
-                "Risk Rating": (q_risk.value if hasattr(q_risk, "value") else str(q_risk or "unknown")).capitalize(),
+                "Risk Rating": (
+                    q_risk.value if q_risk is not None and hasattr(q_risk, "value") else str(q_risk or "unknown")
+                ).capitalize(),
                 "Scanner source": "unknown",
                 "Source Type": _normalise(getattr(component, "source_type", None)),
                 "Source Path": getattr(first_ev, "file_path", "unknown") if first_ev else "unknown",
-                "Operation": (c_func.value if hasattr(c_func, "value") else str(c_func or "unknown")),
+                "Operation": (
+                    c_func.value if c_func is not None and hasattr(c_func, "value") else str(c_func or "unknown")
+                ),
                 "Quantum Vulnerable": "true" if getattr(q_risk, "value", q_risk) == "critical" else "false",
                 "Quantum Safe": "true" if getattr(q_risk, "value", q_risk) == "safe" else "false",
                 "Line Number": str(getattr(first_ev, "line_number", "unknown")),
@@ -582,17 +589,18 @@ def _safe_text_columns(dataframe):
 
 
 def render_cli_fallback_notice() -> None:
-    """Display CLI instructions when the dashboard cannot run normally."""
+    """Display instructions when the dashboard cannot run normally."""
     if st is None:
         print(
-            "Streamlit is not installed. Run the scanner from a terminal "
-            "with: python main.py --all"
+            "Streamlit is required to run the QuantumTrace dashboard. "
+            "Install dependencies and launch with: streamlit run dashboard.py",
+            file=sys.stderr,
         )
         return
 
     st.info(
-        "For headless environments, use the terminal report instead: "
-        "`python main.py --all --output cbom.json`."
+        "The Streamlit dashboard is the primary supported interface for QuantumTrace. "
+        "The CLI entrypoint is temporarily disabled."
     )
 
 
@@ -617,17 +625,40 @@ def _render_metrics(full_dataframe) -> None:
     vuln_series = full_dataframe["Quantum Vulnerable"].astype(str).str.lower()
     vuln_count = int((vuln_series == "true").sum())
 
-    hygiene_score = max(
-        0,
-        int(100 - (crit_count * CRIT_WEIGHT + med_count * MED_WEIGHT) / total_assets),
-    )
-
-    if crit_count > 0:
-        posture_status = "🚨 FAILING"
-    elif vuln_count > 0:
-        posture_status = "⚠️ AT RISK"
+    if calculate_hygiene_score is not None:
+        hygiene_score = calculate_hygiene_score(
+            [{"quantum_risk": r} for r in full_dataframe["Risk Rating"]]
+        )
     else:
-        posture_status = "✅ SECURE"
+        hygiene_score = max(
+            0,
+            int(100 - (crit_count * CRIT_WEIGHT + med_count * MED_WEIGHT) / total_assets),
+        )
+
+    if calculate_posture_status is not None:
+        raw_status = calculate_posture_status(
+            [
+                {
+                    "quantum_risk": row["Risk Rating"],
+                    "quantum_vulnerable": str(row["Quantum Vulnerable"]).lower() == "true",
+                }
+                for _, row in full_dataframe.iterrows()
+            ]
+        )
+        posture_map = {
+            "FAILING": "🚨 FAILING",
+            "AT_RISK": "⚠️ AT RISK",
+            "SECURE": "✅ SECURE",
+            "NO_DATA": "ℹ️ NO DATA",
+        }
+        posture_status = posture_map.get(raw_status, "ℹ️ NO DATA")
+    else:
+        if crit_count > 0:
+            posture_status = "🚨 FAILING"
+        elif vuln_count > 0:
+            posture_status = "⚠️ AT RISK"
+        else:
+            posture_status = "✅ SECURE"
 
     columns = st.columns(5)
     columns[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
@@ -687,7 +718,7 @@ def _render_risk_chart(dataframe) -> None:
     figure.update_layout(
         template="plotly_dark",
         legend_title_text="Risk Rating",
-        margin=dict(l=10, r=10, t=20, b=10),
+        margin={"l": 10, "r": 10, "t": 20, "b": 10},
     )
 
     st.plotly_chart(figure, use_container_width=True)
@@ -712,9 +743,6 @@ def _render_download_button(cbom: dict[str, Any]) -> None:
 
 def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
     """Serialize findings into a CycloneDX 1.6 CBOM document."""
-    if scanner_cli and hasattr(scanner_cli, "build_cbom"):
-        return scanner_cli.build_cbom(findings)
-
     if CBOMSerializer is not None:
         serializer = CBOMSerializer(
             scanner_name="OSPF-DR QuantumTrace",
@@ -778,8 +806,9 @@ def _scan_source_file_fallback(path: Path) -> list[dict[str, Any]]:
             })
 
         # 2. Ed25519
-        if "Ed25519" in line or "ed25519" in line:
-            if "PrivateKey" in line or "GenerateKey" in line or "Sign" in line:
+        if ("Ed25519" in line or "ed25519" in line) and (
+            "PrivateKey" in line or "GenerateKey" in line or "Sign" in line
+        ):
                 findings.append({
                     "canonical_algorithm": "Ed25519",
                     "explanation": "Ed25519 signature algorithm is broken by Shor's quantum algorithm.",
@@ -1135,7 +1164,7 @@ def scan_uploaded_files(
                                 finding["source_path"] = orig
                                 break
                     all_findings.append(finding)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate optional cloud scanner failures
                 warnings.append(f"Error scanning cloud posture files: {exc}")
 
         # 2. Scan PCAP files
@@ -1161,7 +1190,7 @@ def scan_uploaded_files(
                     elif isinstance(finding, dict):
                         finding["source_path"] = orig_name
                     all_findings.append(finding)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate optional network scanner failures
                 warnings.append(f"Error scanning {orig_name}: {exc}")
 
         # 3. Scan Source code files
@@ -1174,7 +1203,7 @@ def scan_uploaded_files(
                     method = getattr(scanner_mod, method_name)
                     try:
                         real_results = method(src_path)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - isolate optional source scanner failures
                         warnings.append(f"Error scanning {orig_name}: {exc}")
                         real_results = []
 
@@ -1198,7 +1227,7 @@ def scan_uploaded_files(
                     elif isinstance(finding, dict):
                         finding["source_path"] = orig_name
                     all_findings.append(finding)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate optional source file scan failures
                 warnings.append(f"Error scanning {orig_name}: {exc}")
 
     if not all_findings:
@@ -1236,7 +1265,7 @@ def scan_bundled_data(
                 for ext in ("*.py", "*.java", "*.go"):
                     for file_p in sample_repos.rglob(ext):
                         findings.extend(_scan_source_file_fallback(file_p))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate sample repo scan failures
             warnings.append(f"Error scanning sample repos: {exc}")
 
     if cloud_dir.exists():
@@ -1255,7 +1284,7 @@ def scan_bundled_data(
                 logger.info("Using FALLBACK heuristic for cloud-posture")
                 for json_p in cloud_dir.glob("*.json"):
                     findings.extend(_scan_cloud_file_fallback(json_p))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate cloud posture scan failures
             warnings.append(f"Error scanning cloud posture: {exc}")
 
     if pcap_dir.exists():
@@ -1274,7 +1303,7 @@ def scan_bundled_data(
                 else:
                     logger.info("Using FALLBACK heuristic for network-capture")
                     findings.extend(_scan_pcap_file_fallback(pcap_file))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate network capture scan failures
                 warnings.append(f"Error scanning network capture: {exc}")
 
     if not findings:
@@ -1556,7 +1585,7 @@ def main() -> None:
             st.session_state["cbom"] = cbom_data
             st.session_state["cbom_source"] = uploaded_cbom.name
             st.session_state["scan_warnings"] = []
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate CBOM upload parsing failure
             st.sidebar.error(f"Failed to load CBOM JSON: {exc}")
 
     if load_local_button:

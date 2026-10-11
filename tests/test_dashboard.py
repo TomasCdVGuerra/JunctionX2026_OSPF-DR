@@ -332,14 +332,16 @@ def test_dashboard_renders_with_mock_st():
 
 def test_main_startup_without_cbom(tmp_path):
     """Verify main() starts up cleanly in empty state when cbom.json does not exist."""
-    with patch("dashboard.DEFAULT_CBOM_PATH", tmp_path / "nonexistent.json"):
-        with patch("dashboard.st") as mock_st:
-            mock_st.session_state = {}
-            mock_st.file_uploader.return_value = None
-            mock_st.button.return_value = False
-            dashboard.main()
-            mock_st.set_page_config.assert_called_once()
-            mock_st.info.assert_called_once()
+    with (
+        patch("dashboard.DEFAULT_CBOM_PATH", tmp_path / "nonexistent.json"),
+        patch("dashboard.st") as mock_st,
+    ):
+        mock_st.session_state = {}
+        mock_st.file_uploader.return_value = None
+        mock_st.button.return_value = False
+        dashboard.main()
+        mock_st.set_page_config.assert_called_once()
+        mock_st.info.assert_called_once()
 
 
 def test_scan_uploaded_files_python():
@@ -348,7 +350,7 @@ def test_scan_uploaded_files_python():
         MockUploadedFile("auth.py", "import hashlib\ndef h(p): return hashlib.md5(p)"),
         MockUploadedFile("crypto_keys.py", "from cryptography.hazmat.primitives.asymmetric import rsa\nk = rsa.generate_private_key(65537, 2048)"),
     ]
-    cbom, warnings = scan_uploaded_files(files)
+    cbom, _warnings = scan_uploaded_files(files)
     assert cbom is not None
     assert "components" in cbom
     assert len(cbom["components"]) >= 2
@@ -368,7 +370,7 @@ def test_scan_uploaded_files_mixed_routing():
         MockUploadedFile("main.go", "package main\nimport \"crypto/md5\"\nfunc f() { md5.New() }"),
         MockUploadedFile("kms.json", json.dumps({"Keys": [{"KeySpec": "RSA_2048", "KeyArn": "arn:123"}]})),
     ]
-    cbom, warnings = scan_uploaded_files(files)
+    cbom, _warnings = scan_uploaded_files(files)
     assert cbom is not None
     assert len(cbom["components"]) >= 4
     source_types = {
@@ -490,7 +492,7 @@ def test_real_scanner_used_when_scan_method_exists_bundled_data(monkeypatch):
     mock_fallback = MagicMock(wraps=dashboard._scan_source_file_fallback)
     monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
 
-    cbom, warnings = dashboard.scan_bundled_data()
+    cbom, _warnings = dashboard.scan_bundled_data()
 
     # The real scanner method MUST be invoked
     assert mock_scan_dir.called, "Real scanner module scan method was not invoked!"
@@ -525,7 +527,7 @@ def test_real_scanner_used_when_scan_method_exists_uploaded_files(monkeypatch):
     monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
 
     uploaded = MockUploadedFile("uploaded.py", "import ed25519")
-    cbom, warnings = dashboard.scan_uploaded_files([uploaded])
+    cbom, _warnings = dashboard.scan_uploaded_files([uploaded])
 
     assert mock_scan_file.called, "Real scan_file method was not called!"
     assert not mock_fallback.called, "Fallback heuristic was called despite real scanner existing!"
@@ -634,7 +636,13 @@ def test_load_findings_dataframe_malformed_components_resilience():
 
 def test_load_findings_dataframe_direct_crypto_finding_list():
     """Petty: Verify load_findings_dataframe directly accepts a list of CryptoFinding models."""
-    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+    from scanner.models import (
+        AssetType,
+        CryptoFinding,
+        CryptoFunction,
+        Evidence,
+        QuantumRiskLevel,
+    )
 
     f = CryptoFinding(
         algorithm_name="Ed25519",
@@ -668,8 +676,8 @@ def test_risk_css_exhaustive_tiers_and_fallbacks():
 
 def test_safe_text_columns_mixed_types_and_nans():
     """Petty: Verify _safe_text_columns normalizes NaNs, booleans, and numbers in text columns into safe strings."""
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     raw_df = pd.DataFrame([
         {"Algorithm": "AES", "Source Path": np.nan, "Matched Snippet": 42, "Rule ID": True},

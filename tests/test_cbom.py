@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-import jsonschema
+import jsonschema  # type: ignore[import-untyped]
 import pytest
 
 from scanner.cbom import CBOMSerializer
@@ -158,7 +158,7 @@ def test_timestamp_is_valid_iso8601():
     serializer = CBOMSerializer()
     ts = serializer.document["metadata"]["timestamp"]
     assert ts.endswith("Z")
-    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(ts)
     assert parsed is not None
 
 
@@ -202,7 +202,13 @@ def test_unicode_and_special_characters():
 
 def test_cbom_pydantic_crypto_finding_serialization_and_schema_validation(cyclonedx_schema):
     """Petty: Verify actual Pydantic CryptoFinding objects across all risk levels validate against CycloneDX 1.6 schema."""
-    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+    from scanner.models import (
+        AssetType,
+        CryptoFinding,
+        CryptoFunction,
+        Evidence,
+        QuantumRiskLevel,
+    )
 
     findings = [
         CryptoFinding(
@@ -255,7 +261,7 @@ def test_cbom_pydantic_crypto_finding_serialization_and_schema_validation(cyclon
 
 def test_cbom_evidence_array_source_path_extraction():
     """Petty: Verify source_path is strictly extracted from finding.evidence[0].file_path."""
-    from scanner.models import AssetType, CryptoFinding, Evidence, QuantumRiskLevel
+    from scanner.models import CryptoFinding, Evidence, QuantumRiskLevel
 
     ev1 = Evidence(file_path="first/path.go", rule_id="R1", line_number=1)
     ev2 = Evidence(file_path="second/path.go", rule_id="R2", line_number=2)

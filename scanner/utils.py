@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 from scanner.models import AssetType, QuantumRiskLevel
 
 
@@ -23,6 +22,20 @@ class SourcePatternRule:
     def __post_init__(self) -> None:
         if isinstance(self.pattern, str):
             self.pattern = re.compile(self.pattern)
+
+    def matches(self, text: str) -> bool:
+        pattern = self.pattern
+        if isinstance(pattern, str):
+            pattern = re.compile(pattern)
+            self.pattern = pattern
+        return pattern.search(text) is not None
+
+    def search(self, text: str) -> re.Match[str] | None:
+        pattern = self.pattern
+        if isinstance(pattern, str):
+            pattern = re.compile(pattern)
+            self.pattern = pattern
+        return pattern.search(text)
 
 
 def _clean_constant_value(raw: str | None) -> str:

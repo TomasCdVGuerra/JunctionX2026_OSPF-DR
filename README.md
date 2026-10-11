@@ -25,6 +25,8 @@ pip install -r requirements.txt
 
 ### 2. Launch the Analytics Dashboard
 
+> **Note**: The Streamlit dashboard is the primary supported interface for this release. The CLI (`main.py`) is temporarily disabled while cloud and network scan pipelines are being unified.
+
 ```bash
 streamlit run dashboard.py
 ```

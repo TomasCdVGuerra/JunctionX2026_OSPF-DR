@@ -5,10 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 # Hoisted from _finding_value() to avoid per-call dict allocation.
 _FINDING_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
@@ -84,7 +83,7 @@ class CBOMSerializer:
     def _current_utc_timestamp() -> str:
         """Return the current UTC timestamp in ISO 8601 format."""
         return (
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
             .isoformat(timespec="seconds")
             .replace("+00:00", "Z")
         )
@@ -132,6 +131,26 @@ class CBOMSerializer:
             return default
 
         names = _FINDING_FIELD_ALIASES.get(name, (name,))
+
+        if name == "explanation":
+            val = cls._get_attribute(finding, *names, default=None)
+            if val is not None and val != "unknown":
+                return val
+            if hasattr(finding, "evidence") and finding.evidence:
+                first_ev = finding.evidence[0]
+                reasoning = getattr(first_ev, "risk_reasoning", None)
+                if reasoning:
+                    return reasoning
+            elif isinstance(finding, dict) and finding.get("evidence"):
+                first_ev = finding["evidence"][0]
+                if isinstance(first_ev, dict):
+                    reasoning = first_ev.get("risk_reasoning")
+                else:
+                    reasoning = getattr(first_ev, "risk_reasoning", None)
+                if reasoning:
+                    return reasoning
+            return default
+
         return cls._get_attribute(finding, *names, default=default)
 
     @staticmethod

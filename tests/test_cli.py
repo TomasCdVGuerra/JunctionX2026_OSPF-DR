@@ -1,21 +1,33 @@
-# Purpose:
-# Integration test suite validating end-to-end command-line interface execution, argument handling, and pipeline output.
-#
-# Responsibilities:
-# - Test CLI argument combinations (--source, --cloud, --pcap, --all, --output, --verbose).
-# - Verify that running the full pipeline generates an output CBOM JSON file on disk.
-# - Test fallback default path resolution when running with the --all flag.
-# - Assert that the process exits with standard code 0 upon successful scan execution.
-#
-# Planned interface:
-# - test_cli_argument_parsing(): tests flag handling and default assignments.
-# - test_end_to_end_pipeline_execution(tmp_path: Path): executes scan against test fixtures and checks generated CBOM file existence.
-# - test_cli_help_and_version(): verifies --help and version output.
-#
-# Rules and edge cases:
-# - Ensure integration tests do not leave temporary output files in the repository root (use pytest tmp_path fixture).
-# - Validate that non-existent target paths produce clean error messages rather than raw unhandled exceptions.
-#
-# Scoring link:
-# - Usability and demo (15%): Validates dependable CLI UX and automated execution.
-# - Coverage (25%): Verifies end-to-end integration across all scanner subsystems.
+"""Tests verifying that the CLI entrypoint is safely disabled while preserving dormant CLI logic."""
+
+from __future__ import annotations
+
+import pytest
+
+import main
+from scanner.cli import build_cli_parser
+
+
+def test_main_cli_entrypoint_is_temporarily_disabled(capsys: pytest.CaptureFixture[str]) -> None:
+    """Ensure invoking main.main() exits with code 2 and informs user to use the Streamlit dashboard."""
+    exit_code = main.main()
+    assert exit_code == 2
+
+    captured = capsys.readouterr()
+    assert "The QuantumTrace CLI is temporarily disabled." in captured.err
+    assert "Run the Streamlit dashboard instead." in captured.err
+
+
+def test_dormant_cli_module_preserved_for_future_reactivation() -> None:
+    """Verify scanner.cli remains intact as dormant code for future reactivation."""
+    parser = build_cli_parser()
+    assert parser.prog == "quantumtrace"
+
+    # Verify all expected arguments remain preserved in dormant parser
+    actions = {action.dest for action in parser._actions}
+    assert "source" in actions
+    assert "cloud" in actions
+    assert "pcap" in actions
+    assert "all" in actions
+    assert "output" in actions
+    assert "verbose" in actions
