@@ -50,6 +50,11 @@ py -3.13 run.py --test
 On Linux/macOS use `python3.13` with the same arguments. `run.py` is the
 single setup and launch entrypoint on all three operating systems.
 
+Dependencies, including pytest, are installed in the project's `.venv`.
+The script does not activate your terminal: use `run.py --test` to run tests
+in that environment without reinstalling requirements. To run `python -m pytest`
+directly, activate `.venv` in your terminal first (see [developer setup](docs/DEV_SETUP.md)).
+
 PCAP uploads use the real network scanner through `scanner/pcap_scanner.py`.
 Install Wireshark with TShark separately; it is not a Python dependency.
 The scanner searches `TSHARK_PATH`, then `PATH`, then standard Wireshark folders.

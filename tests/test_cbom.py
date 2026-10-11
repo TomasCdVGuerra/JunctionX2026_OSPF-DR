@@ -526,7 +526,9 @@ def test_cbom_to_json_file_writing_exception_contracts(tmp_path):
         serializer.to_json(filepath=invalid_path)
 
     # 2. Path is an existing directory instead of a file
-    with pytest.raises(IsADirectoryError):
+    # Opening a directory raises PermissionError on Windows and
+    # IsADirectoryError on POSIX; both must propagate to the caller.
+    with pytest.raises((IsADirectoryError, PermissionError)):
         serializer.to_json(filepath=str(tmp_path))
 
 

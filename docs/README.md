@@ -132,9 +132,18 @@ Kyber draft/híbridos não são automaticamente tratados como FIPS 203 completos
 
 ## Validação e demo
 
-```bash
-python -m pytest -q
+```powershell
+# Windows: usa a .venv automaticamente
+py -3.13 run.py --test
 ```
+
+```bash
+# Linux / macOS: usa a .venv automaticamente
+python3.13 run.py --test
+```
+
+`python -m pytest -q` também funciona com a `.venv` ativada no terminal.
+O `run.py` instala as dependências nesse ambiente; não ativa o terminal.
 
 A suite inclui validação offline do schema CycloneDX 1.6, integração dos
 scanners e testes de regressão. tests/fixtures/expected_findings.json

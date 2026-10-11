@@ -8,6 +8,28 @@ requirements.txt, verifica dependências e inicia a dashboard. Não exige ativa�
 `--require-tshark` exige disponibilidade real de TShark para a demo de PCAP.
 run.py é o único ponto de entrada de instalação e arranque nos três sistemas.
 
+### Testes depois do arranque automático
+
+O `run.py` instala também o pytest na `.venv`, mas não ativa o ambiente no
+terminal que o iniciou. Um comando `pytest` ou `python -m pytest` nesse
+terminal pode usar outro Python, sem as dependências do projeto.
+
+Não é necessário reinstalar requirements. Executar:
+
+```powershell
+# Windows
+py -3.13 run.py --test
+```
+
+```bash
+# Linux / macOS
+python3.13 run.py --test
+```
+
+Para executar testes específicos com `python -m pytest`, ativar primeiro a
+`.venv` usando os comandos da secção seguinte. A ativação aplica-se apenas
+ao terminal atual.
+
 ## Configuração manual alternativa
 1. python -m venv .venv (ou py -3.13 -m venv .venv se tiverem versões diferentes desta)
 
@@ -28,6 +50,8 @@ run.py é o único ponto de entrada de instalação e arranque nos três sistema
 - python.exe -m pytest tests/test_phase0_contract.py -q
 
 # Validação completa e demo:
+- Sem ativar o ambiente: `py -3.13 run.py --test` em Windows ou `python3.13 run.py --test` em Linux/macOS.
+- Os dois comandos seguintes pressupõem a `.venv` ativada:
 - python -m pytest -q (inclui os testes em scanner/network_scanner/tests)
 - python -m streamlit run dashboard.py
 - O TShark é um executável externo; instalar Wireshark/TShark para análises reais de PCAP.

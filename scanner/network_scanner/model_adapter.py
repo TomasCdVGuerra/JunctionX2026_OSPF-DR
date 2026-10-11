@@ -125,7 +125,8 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
                   if client else _values(entry.get("selected_group")))
         for value in _unique_identifiers(groups):
             identifier = parse_identifier(value)
-            if identifier is None or is_grease(identifier):
+            # Preserve unmapped textual identifiers as unresolved evidence.
+            if is_grease(identifier):
                 continue
             primitive = GROUPS.get(identifier) or Primitive(
                 f"TLS-GROUP-{identifier_label(value)}", CryptoFunction.KEY_EXCHANGE)

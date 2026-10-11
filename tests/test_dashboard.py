@@ -1146,20 +1146,23 @@ def test_load_findings_dataframe_type_pedantry():
         assert "Algorithm" in df.columns
         assert "Quantum Risk" in df.columns
         assert "Classical Risk" in df.columns
-        assert len(df.columns) == 17
+        assert "Input ID" in df.columns
+        assert len(df.columns) == 18
 
     # Components field is non-list or None
     for malformed_cbom in [{"components": "not_a_list"}, {"components": None}, {"components": 999}]:
         df = load_findings_dataframe(malformed_cbom)
         assert len(df) == 0
-        assert len(df.columns) == 17
+        assert "Input ID" in df.columns
+        assert len(df.columns) == 18
 
     # Components array containing primitives, None, and empty dict
     mixed_cbom = {"components": [None, 42, "not-a-component", True, {}]}
     df = load_findings_dataframe(mixed_cbom)
     # Only the empty dict should be converted to a row
     assert len(df) == 1
-    assert len(df.columns) == 20
+    assert "Input ID" in df.columns
+    assert len(df.columns) == 21
     assert df.iloc[0]["Algorithm"] == "unknown"
     assert df.iloc[0]["Quantum Risk"] == "Unknown"
     assert df.iloc[0]["Classical Risk"] == "Unknown"
@@ -1191,13 +1194,14 @@ def test_scan_uploaded_files_boundaries_and_error_handling():
     ]
     cbom, warnings = scan_uploaded_files(empty_src)
     assert cbom is None
-    assert warnings == ["No cryptographic findings detected in uploaded files."]
+    assert warnings == ["No cryptographic findings detected in the scanned files."]
 
     # 4. Corrupted cloud posture JSON
     corrupted_json = [MockUploadedFile("truncated.json", b"{\n  \"incomplete\": [")]
     cbom, warnings = scan_uploaded_files(corrupted_json)
     assert cbom is None
-    assert any("Error scanning cloud posture files:" in w for w in warnings)
+    assert len(warnings) == 1
+    assert warnings[0].startswith("Error scanning truncated.json:")
 
 
 def test_load_findings_dataframe_missing_pandas_raises_runtime_error(monkeypatch):
