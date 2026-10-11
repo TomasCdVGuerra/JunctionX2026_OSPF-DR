@@ -129,7 +129,7 @@ def test_extract_evidence_complete():
     assert evidence["Line Number"] == "42"
     assert evidence["Matched Snippet"] == "rsa.generate_private_key()"
     assert evidence["Rule ID"] == "py-rsa-1024"
-    assert evidence["NIST Standard"] == "FIPS 186-4"
+    assert evidence["NIST References"] == "FIPS 186-4"
 
 
 def test_extract_evidence_line_zero():
@@ -223,7 +223,7 @@ def test_component_to_row():
     }
     row = _component_to_row(comp)
     assert row["Algorithm"] == "RSA-2048"
-    assert row["Risk Rating"] == "Critical"
+    assert row["Quantum Risk"] == "Critical"
     assert row["Quantum Vulnerable"] == "true"
     assert row["Quantum Safe"] == "false"
     assert row["Source Type"] == "cloud-posture"
@@ -237,7 +237,7 @@ def test_load_findings_dataframe_empty():
     df = load_findings_dataframe({"components": []})
     assert len(df) == 0
     assert "Algorithm" in df.columns
-    assert "Risk Rating" in df.columns
+    assert "Quantum Risk" in df.columns
     assert "Source Path" in df.columns
 
 
@@ -265,7 +265,7 @@ def test_load_findings_dataframe_from_fixture():
     df = load_findings_dataframe(sample_cbom)
     assert len(df) == 2
     assert list(df["Algorithm"]) == ["AES-256-GCM", "RSA-2048"]
-    assert list(df["Risk Rating"]) == ["Safe", "Critical"]
+    assert list(df["Quantum Risk"]) == ["Safe", "Critical"]
 
 
 def test_safe_text_columns():
@@ -469,7 +469,7 @@ def test_pydantic_crypto_finding_integration_with_cbom_and_dashboard():
     df = load_findings_dataframe(cbom)
     assert len(df) == 1
     assert df.iloc[0]["Algorithm"] == "RSA-2048"
-    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Quantum Risk"] == "Critical"
     assert df.iloc[0]["Source Type"] == "cloud-posture"
 
 
@@ -617,9 +617,9 @@ def test_scanner_choice_logging(caplog):
 def test_load_findings_dataframe_malformed_components_resilience():
     """Petty: Verify load_findings_dataframe never crashes on invalid CBOM structures and preserves schema."""
     expected_cols = [
-        "Algorithm", "Risk Rating", "Scanner source", "Source Type", "Source Path",
+        "Algorithm", "Quantum Risk", "Scanner source", "Source Type", "Source Path",
         "Operation", "Quantum Vulnerable", "Quantum Safe", "Line Number",
-        "Matched Snippet", "Rule ID", "NIST Standard", "BOM Reference", "Description",
+        "Matched Snippet", "Rule ID", "NIST References", "BOM Reference", "Description",
     ]
 
     for bad_cbom in (
@@ -658,7 +658,7 @@ def test_load_findings_dataframe_direct_crypto_finding_list():
     df = load_findings_dataframe([f])
     assert len(df) == 1
     assert df.iloc[0]["Algorithm"] == "Ed25519"
-    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Quantum Risk"] == "Critical"
     assert df.iloc[0]["Source Path"] == "auth/token.go"
     assert df.iloc[0]["Line Number"] == "77"
     assert df.iloc[0]["Rule ID"] == "GO-ED25519"
@@ -726,7 +726,7 @@ def test_extract_evidence_deep_fallback_hierarchy():
     assert ev2["Source Path"] == "nested/path.py"
     assert ev2["Line Number"] == "99"
     assert ev2["Rule ID"] == "RULE-PY"
-    assert ev2["NIST Standard"] == "FIPS 197"
+    assert ev2["NIST References"] == "FIPS 197"
 
 
 def test_pcap_fallback_empty_and_tls_detection(tmp_path):
@@ -743,13 +743,15 @@ def test_pcap_fallback_empty_and_tls_detection(tmp_path):
     tls_pcap.write_bytes(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03")
     tls_findings = dashboard._scan_pcap_file_fallback(tls_pcap)
     assert len(tls_findings) == 1
-    assert tls_findings[0]["canonical_algorithm"] == "ECDHE-RSA-AES128-GCM-SHA256"
-    assert tls_findings[0]["line_number"] is None
-    assert tls_findings[0]["packet_number"] == 1
+    assert tls_findings[0].algorithm_name == "TLS"
+    assert tls_findings[0].confidence == "low"
+    assert tls_findings[0].observation == "observed"
+    assert tls_findings[0].evidence[0].line_number is None
+    assert tls_findings[0].evidence[0].packet_number is None
 
 
 def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
-    """Regression: Cloud fallback preserves RSA-3072, ECC-NIST-P384 without defaulting to RSA-2048."""
+    """Explicit key parameters are preserved; symmetric defaults stay unresolved."""
     cloud_json = tmp_path / "kms.json"
     cloud_json.write_text(json.dumps({
         "Keys": [
@@ -759,11 +761,11 @@ def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
         ]
     }))
     findings = dashboard._scan_cloud_file_fallback(cloud_json)
-    algos = {f["canonical_algorithm"] for f in findings}
-    assert "RSA-3072" in algos
-    assert "ECC-NIST-P384" in algos
-    assert "AES-256-GCM" in algos
-    assert "RSA-2048" not in algos
+    parameters = {(f.algorithm_name, f.key_size) for f in findings}
+    assert ("RSA", 3072) in parameters
+    assert ("EC", 384) in parameters
+    assert ("SYMMETRIC_DEFAULT", None) in parameters
+    assert all(f.mode is None for f in findings)
 
 
 def test_source_fallback_ignores_comments(tmp_path):
@@ -854,18 +856,18 @@ def test_report_findings_from_cbom_structure_and_enrichment():
     rsa_f = report_findings[0]
     assert rsa_f["algorithm_name"] == "RSA-2048"
     assert rsa_f["quantum_risk"] == "critical"
-    assert rsa_f["classical_risk"] == "Safe"
+    assert rsa_f["classical_risk"] == "safe"
     assert rsa_f["source_type"] == "source-code"
     assert rsa_f["source_path"] == "auth/rsa.py"
     assert rsa_f["quantum_vulnerable"] is True
     assert rsa_f["quantum_safe"] is False
     assert rsa_f["nist_standard"] == "FIPS 186-5"
-    assert "Shor" in rsa_f["reasoning"]
+    assert rsa_f["reasoning"] == "unknown"  # No reasoning was supplied by this CBOM.
 
     aes_f = report_findings[1]
     assert aes_f["algorithm_name"] == "AES-256-GCM"
     assert aes_f["quantum_risk"] == "safe"
-    assert aes_f["classical_risk"] == "Safe"
+    assert aes_f["classical_risk"] == "safe"
     assert aes_f["source_type"] == "cloud-posture"
     assert aes_f["quantum_vulnerable"] is False
     assert aes_f["quantum_safe"] is True
@@ -947,7 +949,7 @@ def test_metrics_remain_independent_of_filters():
     with patch("dashboard.st") as mock_st, patch("dashboard._render_metrics", side_effect=mock_render_metrics):
         mock_st.file_uploader.return_value = None
         # Simulate filter: user selects ONLY "Safe", which filters out RSA-2048
-        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if "Risk level" in label else default
+        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if label == "Quantum risk" else default
         mock_st.text_input.return_value = ""
         mock_st.button.return_value = False
         mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
@@ -992,7 +994,7 @@ def test_dual_axis_and_reasoning_in_dataframe():
     df = load_findings_dataframe(sample_cbom)
     assert "Quantum Risk" in df.columns
     assert "Classical Risk" in df.columns
-    assert "NIST Standard" in df.columns
+    assert "NIST References" in df.columns
     assert "Description" in df.columns
 
     rsa_row = df[df["Algorithm"] == "RSA-2048"].iloc[0]
@@ -1021,7 +1023,7 @@ def test_unknown_findings_visible_and_counted():
 
     df = load_findings_dataframe(sample_cbom)
     assert len(df) == 1
-    assert df.iloc[0]["Risk Rating"] == "Unknown"
+    assert df.iloc[0]["Quantum Risk"] == "Unknown"
 
     report_findings = dashboard._report_findings_from_cbom(sample_cbom)
     from scanner.report import build_report_summary

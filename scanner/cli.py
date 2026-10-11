@@ -23,7 +23,7 @@ from scanner.report import (
     calculate_quantum_risk_score,
     generate_summary_counts,
 )
-from scanner.risk import enrich_finding_risk
+from scanner.risk import enrich_finding
 
 
 def build_cli_parser() -> argparse.ArgumentParser:
@@ -137,7 +137,7 @@ def execute_pipeline(args: argparse.Namespace) -> int:
     # Enrich findings with centralized risk engine
     enriched_findings: list[CryptoFinding] = []
     for f in findings:
-        enriched_findings.append(enrich_finding_risk(f))
+        enriched_findings.append(enrich_finding(f))
 
     # Generate aggregate metrics
     report = build_report_summary(enriched_findings)

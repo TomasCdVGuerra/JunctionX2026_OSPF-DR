@@ -30,7 +30,7 @@ GO_RULES: list[SourcePatternRule] = [
         rule_id="go-rsa-keygen",
         pattern=re.compile(r"\brsa\.GenerateKey\b"),
         algorithm_name="RSA",
-        default_key_size="2048",
+        default_key_size=None,
         risk_reasoning="RSA is vulnerable to Shor's quantum factoring algorithm.",
         nist_standard="FIPS 186-5",
         risk_level=QuantumRiskLevel.CRITICAL,
@@ -50,7 +50,7 @@ GO_RULES: list[SourcePatternRule] = [
         rule_id="go-ecdsa",
         pattern=re.compile(r"\becdsa\.(?:GenerateKey|Sign|Verify)\b"),
         algorithm_name="ECDSA",
-        default_key_size="256",
+        default_key_size=None,
         risk_reasoning="ECDSA elliptic curve algorithm is vulnerable to Shor's quantum discrete-log algorithm.",
         nist_standard="FIPS 186-5",
         risk_level=QuantumRiskLevel.CRITICAL,
@@ -267,7 +267,7 @@ def detect_custom_kdf(
 
 def _resolve_aes_key_and_mode(
     source_text: str,
-) -> tuple[int | None, str]:
+) -> tuple[int | None, str | None]:
     """Resolve key size in bits and cipher mode for AES in a Go file without guessing."""
     cleaned_lines = _strip_comments_and_strings(source_text.splitlines())
     cleaned_text = "\n".join(cleaned_lines)
@@ -297,9 +297,9 @@ def _resolve_aes_key_and_mode(
                 key_size = int(bits)
                 break
 
-    # 2. Resolve mode from sanitized code: Detect ECB mode if present; otherwise default or infer GCM
-    mode = "GCM"
-    if "block.Encrypt" in cleaned_text and "cipher.NewGCM" not in cleaned_text and "cipher.NewCBC" not in cleaned_text:
+    # 2. Only explicit mode constructors establish a mode; NewCipher alone does not.
+    mode = None
+    if "block.Encrypt" in cleaned_text and not any(constructor in cleaned_text for constructor in ("cipher.NewGCM", "cipher.NewCBC", "cipher.NewCTR")):
         mode = "ECB"
     elif "cipher.NewCBC" in cleaned_text:
         mode = "CBC"
@@ -372,7 +372,7 @@ def scan_go_file(
         # A. RSA GenerateKey
         if "rsa.GenerateKey(" in code_line:
             size_m = re.search(r"rsa\.GenerateKey\s*\([^,]+,\s*([a-zA-Z0-9_]+)\)", code_line)
-            key_size = 2048
+            key_size = None
             if size_m:
                 val = size_m.group(1)
                 if val.isdigit():
@@ -383,7 +383,7 @@ def scan_go_file(
                         key_size = int(resolved)
 
             findings.append(CryptoFinding(
-                algorithm_name=f"RSA-{key_size}",
+                algorithm_name=f"RSA-{key_size}" if key_size else "RSA",
                 asset_type=AssetType.ALGORITHM,
                 source_type="source-code",
                 key_size=key_size,
@@ -500,11 +500,12 @@ def scan_go_file(
 
         # D. ECDSA
         if "ecdsa.GenerateKey(" in code_line:
+            curve = re.search(r"ecdsa\.GenerateKey\s*\(\s*elliptic\.P(224|256|384|521)\s*\(\s*\)", code_line)
             findings.append(CryptoFinding(
                 algorithm_name="ECDSA",
                 asset_type=AssetType.ALGORITHM,
                 source_type="source-code",
-                key_size=256,
+                key_size=int(curve.group(1)) if curve else None,
                 crypto_function=CryptoFunction.KEYGEN,
                 quantum_risk=QuantumRiskLevel.CRITICAL,
                 observation="observed",
@@ -587,7 +588,7 @@ def scan_go_file(
             elif aes_key_size == 128:
                 quantum_risk = QuantumRiskLevel.MEDIUM
                 risk_reasoning = "AES-128 is weakened by Grover's algorithm to 64-bit security."
-                algo_name = f"AES-128-{mode}"
+                algo_name = f"AES-128-{mode}" if mode else "AES-128"
             elif aes_key_size == 256 and mode == "GCM":
                 quantum_risk = QuantumRiskLevel.SAFE
                 risk_reasoning = "AES-256-GCM provides 128-bit quantum security against Grover's algorithm."
@@ -595,7 +596,7 @@ def scan_go_file(
             elif aes_key_size == 256:
                 quantum_risk = QuantumRiskLevel.SAFE
                 risk_reasoning = f"AES-256 in {mode} mode provides 128-bit quantum security against Grover's algorithm."
-                algo_name = f"AES-256-{mode}"
+                algo_name = f"AES-256-{mode}" if mode else "AES-256"
             else:
                 quantum_risk = QuantumRiskLevel.UNKNOWN
                 risk_reasoning = f"AES in {mode} mode with unresolved key size; speculative key sizes are avoided."
