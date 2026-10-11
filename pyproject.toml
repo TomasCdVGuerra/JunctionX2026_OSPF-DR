@@ -4,7 +4,10 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-ignore = ["TRY004"]
+ignore = ["TRY004", "SIM102", "RUF059"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["F401"]
 
 [tool.mypy]
 python_version = "3.13"

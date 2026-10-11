@@ -374,3 +374,160 @@ def test_cbom_preserves_classical_risk_property(cyclonedx_schema):
     assert props["cryptotrace:classicalRisk"] == "Safe"
     assert props["cryptotrace:riskRating"] == "Critical"
     jsonschema.validate(instance=serializer.document, schema=cyclonedx_schema)
+
+
+def test_cbom_boolean_and_extreme_key_size_boundaries(cyclonedx_schema):
+    """Petty: Test boolean vs int confusion (type(True) is int -> False) and boundary/extreme key sizes."""
+    s = CBOMSerializer()
+
+    # 1. Boolean True and False key sizes (must NOT be treated as integer sizes in native schema)
+    s.add_finding({
+        "canonical_algorithm": "RSA-BOOL",
+        "key_size": True,
+        "asset_type": "algorithm",
+    })
+    s.add_finding({
+        "canonical_algorithm": "KEY-BOOL",
+        "key_size": False,
+        "asset_type": "key",
+    })
+
+    comp_algo_bool = s.document["components"][0]
+    algo_props = comp_algo_bool.get("cryptoProperties", {}).get("algorithmProperties", {})
+    assert "parameterSetIdentifier" not in algo_props
+    props0 = {p["name"]: p["value"] for p in comp_algo_bool["properties"]}
+    assert props0.get("cryptotrace:key_size") == "true"
+
+    comp_key_bool = s.document["components"][1]
+    mat_props = comp_key_bool.get("cryptoProperties", {}).get("relatedCryptoMaterialProperties", {})
+    assert "size" not in mat_props
+    props1 = {p["name"]: p["value"] for p in comp_key_bool["properties"]}
+    assert props1.get("cryptotrace:key_size") == "false"
+
+    # 2. Non-positive key sizes: 0, -1, -2048
+    for non_pos_size in (0, -1, -2048):
+        s_np = CBOMSerializer()
+        s_np.add_finding({
+            "canonical_algorithm": "AES-ZERO",
+            "key_size": non_pos_size,
+            "asset_type": "algorithm",
+        })
+        s_np.add_finding({
+            "canonical_algorithm": "KEY-ZERO",
+            "key_size": non_pos_size,
+            "asset_type": "key",
+        })
+        c0 = s_np.document["components"][0]
+        c1 = s_np.document["components"][1]
+        assert "parameterSetIdentifier" not in c0.get("cryptoProperties", {}).get("algorithmProperties", {})
+        assert "size" not in c1.get("cryptoProperties", {}).get("relatedCryptoMaterialProperties", {})
+        jsonschema.validate(instance=s_np.document, schema=cyclonedx_schema)
+
+    # 3. Massive key size: 10**9 (1 billion bits)
+    s_huge = CBOMSerializer()
+    s_huge.add_finding({
+        "canonical_algorithm": "HUGE-KEY",
+        "key_size": 1_000_000_000,
+        "asset_type": "algorithm",
+    })
+    s_huge.add_finding({
+        "canonical_algorithm": "HUGE-MAT",
+        "key_size": 1_000_000_000,
+        "asset_type": "key",
+    })
+    c_huge0 = s_huge.document["components"][0]
+    c_huge1 = s_huge.document["components"][1]
+    assert c_huge0["cryptoProperties"]["algorithmProperties"]["parameterSetIdentifier"] == "1000000000"
+    assert c_huge1["cryptoProperties"]["relatedCryptoMaterialProperties"]["size"] == 1_000_000_000
+    jsonschema.validate(instance=s_huge.document, schema=cyclonedx_schema)
+
+    # 4. String key_size: "2048-bit"
+    s_str = CBOMSerializer()
+    s_str.add_finding({
+        "canonical_algorithm": "STR-KEY",
+        "key_size": "2048-bit",
+        "asset_type": "key",
+    })
+    c_str = s_str.document["components"][0]
+    assert "size" not in c_str.get("cryptoProperties", {}).get("relatedCryptoMaterialProperties", {})
+    props_str = {p["name"]: p["value"] for p in c_str["properties"]}
+    assert props_str.get("cryptotrace:key_size") == "2048-bit"
+    jsonschema.validate(instance=s_str.document, schema=cyclonedx_schema)
+
+
+def test_cbom_bom_ref_high_volume_collision_stress_and_delimiters(cyclonedx_schema):
+    """Petty: 50-item duplicate collision stress test and colon-delimiter injection handling."""
+    s = CBOMSerializer()
+    identical_finding = {
+        "canonical_algorithm": "RSA-2048",
+        "risk_rating": "Critical",
+        "source_type": "source-code",
+        "source_path": "crypto/keys.py",
+        "operation": "SIGN",
+        "line_number": 42,
+    }
+
+    # Add 50 exactly identical findings
+    for _ in range(50):
+        s.add_finding(identical_finding)
+
+    assert len(s.document["components"]) == 50
+    refs = [c["bom-ref"] for c in s.document["components"]]
+    # All 50 bom-ref values must be completely unique
+    assert len(set(refs)) == 50
+
+    # First bom-ref is crypto:<hash>, subsequent ones have -1, -2, ..., -49
+    base_ref = refs[0]
+    assert base_ref.startswith("crypto:")
+    assert not base_ref.endswith("-0")
+    for i in range(1, 50):
+        assert refs[i] == f"{base_ref}-{i}"
+
+    # Verify the 50-item document validates against official CycloneDX schema
+    jsonschema.validate(instance=s.document, schema=cyclonedx_schema)
+
+    # Delimiter injection test: fields containing embedded colons
+    s_colons = CBOMSerializer()
+    s_colons.add_finding({
+        "canonical_algorithm": "custom:algo:v1",
+        "source_path": "path:with:colons:file.go",
+        "source_type": "source:type:custom",
+        "operation": "OPERATION:SIGN:VERIFY",
+        "rule_id": "RULE:ID:123",
+        "json_path": "$.store:book:0",
+    })
+    s_colons.add_finding({
+        "canonical_algorithm": "custom:algo:v1",
+        "source_path": "path:with:colons:file.go",
+        "source_type": "source:type:custom",
+        "operation": "OPERATION:SIGN:VERIFY",
+        "rule_id": "RULE:ID:123",
+        "json_path": "$.store:book:0",
+    })
+    colon_comps = s_colons.document["components"]
+    assert len(colon_comps) == 2
+    assert colon_comps[0]["bom-ref"] != colon_comps[1]["bom-ref"]
+    assert colon_comps[0]["bom-ref"].startswith("crypto:")
+    assert colon_comps[1]["bom-ref"] == f"{colon_comps[0]['bom-ref']}-1"
+    jsonschema.validate(instance=s_colons.document, schema=cyclonedx_schema)
+
+
+def test_cbom_to_json_file_writing_exception_contracts(tmp_path):
+    """Petty: Verify to_json raises explicit OSError/FileNotFoundError on invalid file paths."""
+    serializer = CBOMSerializer()
+    serializer.add_finding({"canonical_algorithm": "AES-256"})
+
+    # 1. Non-existent parent directory
+    invalid_path = tmp_path / "nonexistent_directory" / "deeply" / "nested" / "cbom.json"
+    with pytest.raises(FileNotFoundError):
+        serializer.to_json(filepath=str(invalid_path))
+
+    with pytest.raises(FileNotFoundError):
+        serializer.to_json(filepath=invalid_path)
+
+    # 2. Path is an existing directory instead of a file
+    with pytest.raises(IsADirectoryError):
+        serializer.to_json(filepath=str(tmp_path))
+
+
+

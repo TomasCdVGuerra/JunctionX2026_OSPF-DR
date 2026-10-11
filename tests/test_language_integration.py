@@ -7,8 +7,8 @@ import pytest
 
 import dashboard
 from scanner.models import CryptoFinding
-from scanner.source_scanner import scan_file
 from scanner.risk import enrich_finding
+from scanner.source_scanner import scan_file
 
 
 @pytest.mark.parametrize("extension,source,name,operation,quantum,classical", [
