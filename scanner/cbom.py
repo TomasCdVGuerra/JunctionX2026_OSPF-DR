@@ -43,6 +43,9 @@ _FINDING_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "operation",
         "crypto_function",
     ),
+    "classical_risk": (
+        "classical_risk",
+    ),
 }
 
 
@@ -175,6 +178,19 @@ class CBOMSerializer:
         risk_rating = self._stringify(
             self._finding_value(finding, "risk_rating")
         )
+        classical_risk = self._stringify(
+            self._finding_value(finding, "classical_risk")
+        )
+        if classical_risk == "unknown" and canonical_algorithm != "unknown":
+            from scanner.risk import evaluate_risk, is_classically_broken
+            if is_classically_broken(canonical_algorithm):
+                classical_risk = "critical"
+            else:
+                risk_tier, _, _, _ = evaluate_risk(canonical_algorithm)
+                if risk_tier.value == "critical":
+                    classical_risk = "medium" if "1024" in canonical_algorithm else "safe"
+                elif risk_tier.value in ("medium", "safe"):
+                    classical_risk = "safe"
         quantum_vulnerable = self._stringify(
             self._finding_value(
                 finding,
@@ -270,6 +286,10 @@ class CBOMSerializer:
                 {
                     "name": "cryptotrace:riskRating",
                     "value": risk_rating,
+                },
+                {
+                    "name": "cryptotrace:classicalRisk",
+                    "value": classical_risk,
                 },
                 {
                     "name": "cryptotrace:quantumVulnerable",
