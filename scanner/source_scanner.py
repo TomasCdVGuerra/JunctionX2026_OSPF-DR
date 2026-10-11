@@ -17,9 +17,9 @@ __all__ = [
 
 
 def scan_file(
-    file_path: Path,
+    file_path: str | Path,
     rules: list[Any] | None = None,
-    base_dir: Path | None = None,
+    base_dir: str | Path | None = None,
 ) -> list[CryptoFinding]:
     """Detect language by file extension and dispatch to the appropriate language scanner."""
     file_path = Path(file_path)
@@ -30,7 +30,8 @@ def scan_file(
 
     if suffix == ".go":
         from scanner.go_scanner import scan_go_file
-        return scan_go_file(file_path, base_dir=base_dir, rules=rules)
+        effective_base = Path(base_dir) if base_dir is not None else None
+        return scan_go_file(file_path, base_dir=effective_base, rules=rules)
 
     if suffix == ".py":
         try:
@@ -38,7 +39,7 @@ def scan_file(
             if hasattr(py_mod, "scan_python_file"):
                 return py_mod.scan_python_file(file_path, base_dir=base_dir)
             logger.warning("Python scanner unavailable; file was not analyzed: %s", file_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Python scanner failed on %s: %s", file_path, exc)
         return []
 
@@ -48,7 +49,7 @@ def scan_file(
             if hasattr(java_mod, "scan_java_file"):
                 return java_mod.scan_java_file(file_path, base_dir=base_dir)
             logger.warning("Java scanner unavailable; file was not analyzed: %s", file_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate optional language scanner failures
             logger.warning("Java scanner failed on %s: %s", file_path, exc)
         return []
 
@@ -56,15 +57,15 @@ def scan_file(
 
 
 def scan_source_directory(
-    directory_path: Path,
-    base_dir: Path | None = None,
+    directory_path: str | Path,
+    base_dir: str | Path | None = None,
 ) -> list[CryptoFinding]:
     """Recursively discover and dispatch source code files to language-specific scanners."""
     directory_path = Path(directory_path)
     if not directory_path.is_dir():
         return []
 
-    effective_base = base_dir if base_dir is not None else directory_path
+    effective_base = Path(base_dir) if base_dir is not None else directory_path
     findings: list[CryptoFinding] = []
 
     for path in sorted(directory_path.rglob("*")):

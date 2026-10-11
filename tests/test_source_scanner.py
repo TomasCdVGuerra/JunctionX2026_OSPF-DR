@@ -13,11 +13,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
-
-from scanner.models import AssetType, CryptoFinding, QuantumRiskLevel
+from scanner.models import AssetType, QuantumRiskLevel
 from scanner.source_scanner import scan_file, scan_source_directory
 from scanner.utils import (
     SourcePatternRule,
@@ -26,14 +23,13 @@ from scanner.utils import (
     resolve_constant,
 )
 
-
 # --- Petty Dispatcher Tests ---
 
 def test_source_scanner_delegates_go_files_to_go_scanner(tmp_path: Path):
     """Petty: Verify .go files are strictly dispatched to go_scanner with exact relative paths."""
     go_file = tmp_path / "main.go"
     go_file.write_text('package main\nimport "crypto/md5"\nfunc foo() { md5.New() }')
-    
+
     findings = scan_file(go_file, base_dir=tmp_path)
     assert len(findings) == 1
     assert findings[0].algorithm_name == "MD5"
@@ -93,7 +89,7 @@ def test_source_scanner_directory_scan_traversal_and_relative_paths(tmp_path: Pa
     pkg.mkdir(parents=True)
     f1 = pkg / "hasher.go"
     f1.write_text('package crypto\nimport "crypto/md5"\nfunc h() { md5.New() }')
-    
+
     f2 = tmp_path / "readme.txt"
     f2.write_text("md5.New()")
 

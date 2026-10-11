@@ -1,24 +1,23 @@
 """Unit and integration tests for scanner/go_scanner.py and scanner/source_scanner.py."""
 
 from pathlib import Path
+
 import pytest
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
-from scanner.utils import (
-    SourcePatternRule,
-    infer_key_size_from_literal,
-    resolve_constant,
+from scanner.go_scanner import (
+    GO_RULES,
+    scan,
+    scan_go_file,
 )
+from scanner.models import AssetType, CryptoFinding, CryptoFunction, QuantumRiskLevel
 from scanner.source_scanner import (
     scan_file,
     scan_source_directory,
 )
-from scanner.go_scanner import (
-    GO_RULES,
-    detect_custom_kdf,
-    resolve_go_constant,
-    scan,
-    scan_go_file,
+from scanner.utils import (
+    SourcePatternRule,
+    infer_key_size_from_literal,
+    resolve_constant,
 )
 
 SAMPLE_GO_DIR = Path("support-materials/sample-repos/go")
@@ -227,7 +226,7 @@ AES_KEY = "0123456789ABCDEF"
 def test_infer_key_size_from_literal():
     assert infer_key_size_from_literal("0123456789ABCDEF") == "128"
     assert infer_key_size_from_literal('[]byte("0123456789ABCDEF")') == "128"
-    assert infer_key_size_from_literal("shared-signing-key-32-bytes-long") == "256"
+    assert infer_key_size_from_literal("shared-signing-key-32-bytes-long") == "unknown"
     assert infer_key_size_from_literal("16") == "128"
     assert infer_key_size_from_literal("32") == "256"
     assert infer_key_size_from_literal("1024") == "1024"
@@ -510,6 +509,7 @@ func main() { md5.New() }
 def test_crypto_finding_extra_fields_forbidden():
     """Petty: Verify that extra fields are strictly forbidden by ConfigDict(extra='forbid')."""
     from pydantic import ValidationError
+
     from scanner.models import Evidence
 
     with pytest.raises(ValidationError):
@@ -525,6 +525,7 @@ def test_crypto_finding_extra_fields_forbidden():
 def test_crypto_finding_empty_algorithm_name_rejected():
     """Petty: Verify that blank or whitespace algorithm_name raises ValidationError."""
     from pydantic import ValidationError
+
     from scanner.models import Evidence
 
     ev = [Evidence(file_path="main.go", rule_id="test", line_number=1)]
@@ -805,3 +806,29 @@ def test_arbitrary_strings_do_not_become_guessed_key_sizes():
     assert infer_key_size_from_literal('"config_label"') == "unknown"
     assert infer_key_size_from_literal("'temporary_token'") == "unknown"
 
+
+def test_custom_pbkdf2_unknown_key_size_is_not_guessed(tmp_path: Path):
+    """Regression: PBKDF2 with unresolvable key length must leave key_size as None (not guess 256)."""
+    code = """package main
+
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+)
+
+func deriveKey(password, salt []byte) []byte {
+    mac := hmac.New(sha256.New, password)
+    var result [32]byte
+    result[0] ^= mac.Sum(nil)[0]
+    return result[:]
+}
+"""
+    f = tmp_path / "pbkdf2_nokeylen.go"
+    f.write_text(code, encoding="utf-8")
+    findings = scan_go_file(f)
+
+    pbkdf2_findings = [f for f in findings if "PBKDF2" in f.algorithm_name]
+    assert len(pbkdf2_findings) == 1
+    finding = pbkdf2_findings[0]
+    assert finding.key_size is None
+    assert finding.quantum_risk == QuantumRiskLevel.SAFE

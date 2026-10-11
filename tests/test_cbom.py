@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-import jsonschema
+import jsonschema  # type: ignore[import-untyped]
 import pytest
 
 from scanner.cbom import CBOMSerializer
@@ -158,7 +158,7 @@ def test_timestamp_is_valid_iso8601():
     serializer = CBOMSerializer()
     ts = serializer.document["metadata"]["timestamp"]
     assert ts.endswith("Z")
-    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(ts)
     assert parsed is not None
 
 
@@ -202,7 +202,13 @@ def test_unicode_and_special_characters():
 
 def test_cbom_pydantic_crypto_finding_serialization_and_schema_validation(cyclonedx_schema):
     """Petty: Verify actual Pydantic CryptoFinding objects across all risk levels validate against CycloneDX 1.6 schema."""
-    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+    from scanner.models import (
+        AssetType,
+        CryptoFinding,
+        CryptoFunction,
+        Evidence,
+        QuantumRiskLevel,
+    )
 
     findings = [
         CryptoFinding(
@@ -255,7 +261,7 @@ def test_cbom_pydantic_crypto_finding_serialization_and_schema_validation(cyclon
 
 def test_cbom_evidence_array_source_path_extraction():
     """Petty: Verify source_path is strictly extracted from finding.evidence[0].file_path."""
-    from scanner.models import AssetType, CryptoFinding, Evidence, QuantumRiskLevel
+    from scanner.models import CryptoFinding, Evidence, QuantumRiskLevel
 
     ev1 = Evidence(file_path="first/path.go", rule_id="R1", line_number=1)
     ev2 = Evidence(file_path="second/path.go", rule_id="R2", line_number=2)
@@ -337,3 +343,19 @@ def test_cbom_boolean_properties_stringified_strictly_lowercase():
     assert props["cryptotrace:quantumSafe"] == "true"
     assert props["cryptotrace:quantumVulnerable"] != "False"
     assert props["cryptotrace:quantumSafe"] != "True"
+
+
+def test_cbom_bom_ref_unique_across_different_lines_and_duplicates():
+    """Verify findings differing only by line number or identical duplicate occurrences get unique bom-ref IDs."""
+    s = CBOMSerializer()
+    f1 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 10}
+    f2 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 50}
+    f3 = {"canonical_algorithm": "AES-256", "source_path": "main.py", "operation": "encrypt", "line_number": 10}
+
+    s.add_finding(f1)
+    s.add_finding(f2)
+    s.add_finding(f3)
+
+    refs = [c["bom-ref"] for c in s.document["components"]]
+    assert len(refs) == 3
+    assert len(set(refs)) == 3, f"All bom-ref IDs in BOM document must be unique, got: {refs}"

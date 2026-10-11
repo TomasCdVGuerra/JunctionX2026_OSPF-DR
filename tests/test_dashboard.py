@@ -2,18 +2,10 @@
 
 import json
 from enum import Enum
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 import dashboard
 from dashboard import (
-    CRITICAL_WEIGHT,
-    DEFAULT_CBOM_PATH,
-    MEDIUM_WEIGHT,
-    RISK_COLORS,
-    RISK_ORDER,
     _build_cbom_from_findings,
     _component_to_row,
     _extract_evidence,
@@ -340,14 +332,16 @@ def test_dashboard_renders_with_mock_st():
 
 def test_main_startup_without_cbom(tmp_path):
     """Verify main() starts up cleanly in empty state when cbom.json does not exist."""
-    with patch("dashboard.DEFAULT_CBOM_PATH", tmp_path / "nonexistent.json"):
-        with patch("dashboard.st") as mock_st:
-            mock_st.session_state = {}
-            mock_st.file_uploader.return_value = None
-            mock_st.button.return_value = False
-            dashboard.main()
-            mock_st.set_page_config.assert_called_once()
-            mock_st.info.assert_called_once()
+    with (
+        patch("dashboard.DEFAULT_CBOM_PATH", tmp_path / "nonexistent.json"),
+        patch("dashboard.st") as mock_st,
+    ):
+        mock_st.session_state = {}
+        mock_st.file_uploader.return_value = None
+        mock_st.button.return_value = False
+        dashboard.main()
+        mock_st.set_page_config.assert_called_once()
+        mock_st.info.assert_called_once()
 
 
 def test_scan_uploaded_files_python():
@@ -356,7 +350,7 @@ def test_scan_uploaded_files_python():
         MockUploadedFile("auth.py", "import hashlib\ndef h(p): return hashlib.md5(p)"),
         MockUploadedFile("crypto_keys.py", "from cryptography.hazmat.primitives.asymmetric import rsa\nk = rsa.generate_private_key(65537, 2048)"),
     ]
-    cbom, warnings = scan_uploaded_files(files)
+    cbom, _warnings = scan_uploaded_files(files)
     assert cbom is not None
     assert "components" in cbom
     assert len(cbom["components"]) >= 2
@@ -376,7 +370,7 @@ def test_scan_uploaded_files_mixed_routing():
         MockUploadedFile("main.go", "package main\nimport \"crypto/md5\"\nfunc f() { md5.New() }"),
         MockUploadedFile("kms.json", json.dumps({"Keys": [{"KeySpec": "RSA_2048", "KeyArn": "arn:123"}]})),
     ]
-    cbom, warnings = scan_uploaded_files(files)
+    cbom, _warnings = scan_uploaded_files(files)
     assert cbom is not None
     assert len(cbom["components"]) >= 4
     source_types = {
@@ -498,7 +492,7 @@ def test_real_scanner_used_when_scan_method_exists_bundled_data(monkeypatch):
     mock_fallback = MagicMock(wraps=dashboard._scan_source_file_fallback)
     monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
 
-    cbom, warnings = dashboard.scan_bundled_data()
+    cbom, _warnings = dashboard.scan_bundled_data()
 
     # The real scanner method MUST be invoked
     assert mock_scan_dir.called, "Real scanner module scan method was not invoked!"
@@ -533,7 +527,7 @@ def test_real_scanner_used_when_scan_method_exists_uploaded_files(monkeypatch):
     monkeypatch.setattr(dashboard, "_scan_source_file_fallback", mock_fallback)
 
     uploaded = MockUploadedFile("uploaded.py", "import ed25519")
-    cbom, warnings = dashboard.scan_uploaded_files([uploaded])
+    cbom, _warnings = dashboard.scan_uploaded_files([uploaded])
 
     assert mock_scan_file.called, "Real scan_file method was not called!"
     assert not mock_fallback.called, "Fallback heuristic was called despite real scanner existing!"
@@ -642,7 +636,13 @@ def test_load_findings_dataframe_malformed_components_resilience():
 
 def test_load_findings_dataframe_direct_crypto_finding_list():
     """Petty: Verify load_findings_dataframe directly accepts a list of CryptoFinding models."""
-    from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence, QuantumRiskLevel
+    from scanner.models import (
+        AssetType,
+        CryptoFinding,
+        CryptoFunction,
+        Evidence,
+        QuantumRiskLevel,
+    )
 
     f = CryptoFinding(
         algorithm_name="Ed25519",
@@ -676,8 +676,8 @@ def test_risk_css_exhaustive_tiers_and_fallbacks():
 
 def test_safe_text_columns_mixed_types_and_nans():
     """Petty: Verify _safe_text_columns normalizes NaNs, booleans, and numbers in text columns into safe strings."""
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     raw_df = pd.DataFrame([
         {"Algorithm": "AES", "Source Path": np.nan, "Matched Snippet": 42, "Rule ID": True},
@@ -726,5 +726,55 @@ def test_extract_evidence_deep_fallback_hierarchy():
     assert ev2["Line Number"] == "99"
     assert ev2["Rule ID"] == "RULE-PY"
     assert ev2["NIST Standard"] == "FIPS 197"
+
+
+def test_pcap_fallback_empty_and_tls_detection(tmp_path):
+    """Regression: Empty/DNS-only PCAP yields 0 findings; TLS marker yields finding with valid evidence packet_number."""
+    empty_pcap = tmp_path / "empty.pcap"
+    empty_pcap.write_bytes(b"")
+    assert dashboard._scan_pcap_file_fallback(empty_pcap) == []
+
+    dns_pcap = tmp_path / "dns.pcap"
+    dns_pcap.write_bytes(b"\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00")
+    assert dashboard._scan_pcap_file_fallback(dns_pcap) == []
+
+    tls_pcap = tmp_path / "tls.pcap"
+    tls_pcap.write_bytes(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03")
+    tls_findings = dashboard._scan_pcap_file_fallback(tls_pcap)
+    assert len(tls_findings) == 1
+    assert tls_findings[0]["canonical_algorithm"] == "ECDHE-RSA-AES128-GCM-SHA256"
+    assert tls_findings[0]["line_number"] is None
+    assert tls_findings[0]["packet_number"] == 1
+
+
+def test_cloud_fallback_preserves_exact_keyspecs(tmp_path):
+    """Regression: Cloud fallback preserves RSA-3072, ECC-NIST-P384 without defaulting to RSA-2048."""
+    cloud_json = tmp_path / "kms.json"
+    cloud_json.write_text(json.dumps({
+        "Keys": [
+            {"KeySpec": "RSA_3072", "KeyArn": "arn:aws:kms:1:key/rsa3072"},
+            {"KeySpec": "ECC_NIST_P384", "KeyArn": "arn:aws:kms:1:key/ecc384"},
+            {"KeySpec": "SYMMETRIC_DEFAULT", "KeyArn": "arn:aws:kms:1:key/symm"},
+        ]
+    }))
+    findings = dashboard._scan_cloud_file_fallback(cloud_json)
+    algos = {f["canonical_algorithm"] for f in findings}
+    assert "RSA-3072" in algos
+    assert "ECC-NIST-P384" in algos
+    assert "AES-256-GCM" in algos
+    assert "RSA-2048" not in algos
+
+
+def test_source_fallback_ignores_comments(tmp_path):
+    """Regression: Source fallback ignores comments containing crypto names."""
+    py_file = tmp_path / "clean.py"
+    py_file.write_text("""
+# We decided that md5 and sha1 are completely forbidden here
+// Also do not use deriveKey for passwords
+def process(data):
+    return data
+""")
+    findings = dashboard._scan_source_file_fallback(py_file)
+    assert len(findings) == 0
 
 
