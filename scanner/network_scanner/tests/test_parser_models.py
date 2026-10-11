@@ -141,6 +141,38 @@ def test_tls_client_groups_signatures_and_cipher_options_are_advertised(parsed_m
     _assert_no_assessment(findings)
 
 
+@pytest.mark.parametrize("cipher,version", [("0x1302", "TLS 1.2"), ("0xc02f", "TLS 1.3")])
+def test_incompatible_server_selection_preserves_evidence_without_valid_primitives(parsed_metadata, tmp_path, cipher, version):
+    """Sinaliza selecao inconsistente preservando codigo, versao, pacote e riscos desconhecidos."""
+    parsed_metadata(tls=[_tls(handshake_type="Server Hello", tls_version=version,
+                             selected_cipher=cipher, cipher_suites=[cipher])])
+    findings = parser.scan(tmp_path / "incompatible.pcap")
+    [finding] = _algorithms(findings)
+    assert finding.algorithm_name == f"TLS-CIPHER-{cipher}"
+    assert finding.crypto_function == CryptoFunction.UNKNOWN
+    assert finding.observation == "negotiated" and finding.protocol == version
+    details = json.loads(finding.evidence[0].matched_snippet)
+    assert details["mapping_status"] == "incompatible-version"
+    assert details["cipher_suite"] == cipher and details["cipher_suite_name"]
+    assert finding.evidence[0].packet_number == 42
+    _assert_no_assessment(findings)
+
+
+@pytest.mark.parametrize("version", ["TLS 1.2", "TLS 1.3"])
+def test_mixed_client_cipher_proposals_are_not_incompatible_selections(parsed_metadata, tmp_path, version):
+    """Aceita propostas de suites TLS 1.2 e 1.3 no mesmo ClientHello sem inventar selecao."""
+    parsed_metadata(tls=[_tls(tls_version=version, supported_versions=["TLS 1.3", "TLS 1.2"],
+                             cipher_suites=["0x1302", "0xc02f"])])
+    findings = parser.scan(tmp_path / "mixed-proposals.pcap")
+    algorithms = _algorithms(findings)
+    assert any(f.algorithm_name == "AES" and f.key_size == 256 for f in algorithms)
+    assert any(f.algorithm_name == "AES" and f.key_size == 128 for f in algorithms)
+    assert any(f.algorithm_name == "ECDHE" for f in algorithms)
+    assert all(f.observation == "advertised" for f in algorithms)
+    assert all("mapping_status" not in json.loads(e.matched_snippet)
+               for f in findings for e in f.evidence)
+
+
 def test_tls_server_uses_only_explicit_selected_cipher_and_group(parsed_metadata, tmp_path):
     """Usa apenas cifra e grupo explicitamente selecionados no ServerHello, sem promover propostas ou assinaturas."""
     parsed_metadata(tls=[_tls(handshake_type="Server Hello", cipher_suites=["0x1301", "0x1302"],
@@ -310,6 +342,23 @@ def test_public_json_array_serializes_enum_values_excludes_none_and_roundtrips_m
         assert "\n" not in result
     else:
         assert result.startswith("[\n  {")
+
+
+def test_adapter_excludes_host_credentials_and_raw_secrets(parsed_metadata, tmp_path):
+    """Remove credenciais do host e preserva protocolo, endpoints e pacote na evidencia."""
+    entry = {"protocol": "HTTP", "http_host": "user:SECRET@example.test:8080",
+             "packet_number": 7, "source_ip": "192.0.2.1", "destination_ip": "192.0.2.2",
+             "password": "SECRET", "payload": "SECRET", "matched_snippet": "SECRET"}
+    before = copy.deepcopy(entry)
+    parsed_metadata(cleartext=[entry])
+    [finding] = parser.scan(tmp_path / "host.pcap")
+    details = json.loads(finding.evidence[0].matched_snippet)
+    assert details["http_host"] == "example.test:8080"
+    assert details["source_ip"] == "192.0.2.1"
+    assert details["destination_ip"] == "192.0.2.2"
+    assert finding.evidence[0].packet_number == 7
+    assert "SECRET" not in json.dumps(finding.to_dict())
+    assert entry == before
 
 
 def test_scan_and_json_of_empty_observations_return_empty_lists(parsed_metadata, tmp_path):

@@ -94,28 +94,38 @@ def test_tls_server_selected_version_overrides_legacy_version(tshark_packets, se
     assert entry["supported_versions"] == [expected]
 
 
-@pytest.mark.xfail(strict=True, reason="Parser drops unknown non-GREASE supported_versions, losing evidence needed for unknown-risk findings.")
-def test_tls_unknown_supported_version_survives_without_grease(tshark_packets):
-    """Documenta a falha conhecida na preservacao de versoes TLS desconhecidas anunciadas, excluindo GREASE."""
+@pytest.mark.parametrize("supported,expected,version", [
+    (["0x1a1a", "0x0500", "0x0304"], ["0x0500", "TLS 1.3"], "TLS 1.3"),
+    (["0x0500"], ["0x0500"], "TLS 1.2"),
+    (["1280", "0x0304", "0x0500"], ["1280", "TLS 1.3", "0x0500"], "TLS 1.3"),
+    (["malformed", "-1", "65536", "0x1a1a", "0x0500"], ["0x0500"], "TLS 1.2"),
+])
+def test_tls_unknown_supported_version_survives_without_grease(tshark_packets, supported, expected, version):
+    """Preserva versoes anunciadas desconhecidas e a ordem, excluindo GREASE e valores invalidos."""
     tshark_packets({"tls.handshake.type": ["1"],
                     "tls.handshake.version": ["0x0303"],
-                    "tls.handshake.extensions.supported_version": ["0x1a1a", "0x0500", "0x0304"]})
+                    "tls.handshake.extensions.supported_version": supported})
     [entry] = parser.extract_tls_metadata("future-version.pcap")
-    assert entry["tls_version"] == "TLS 1.3"
+    assert entry["tls_version"] == version
     # Unrecognized versions are evidence, whereas GREASE is a reserved probe.
     # Dropping the former makes downstream unknown-risk findings impossible.
-    assert entry["supported_versions"] == ["0x0500", "TLS 1.3"]
+    assert entry["supported_versions"] == expected
 
 
-@pytest.mark.xfail(strict=True, reason="Parser replaces an unknown ServerHello supported_version with legacy_version, falsely reporting TLS 1.2.")
-def test_tls_unknown_server_selected_version_is_not_replaced_by_legacy_tls12(tshark_packets):
-    """Documenta a falha conhecida em que uma versao selecionada desconhecida e substituida pela versao legada TLS 1.2."""
+@pytest.mark.parametrize("selected,expected,supported", [
+    (["0x0500"], "0x0500", ["0x0500"]),
+    (["1280"], "1280", ["1280"]),
+    (["0X0500"], "0X0500", ["0X0500"]),
+    ([], "TLS 1.2", []),
+])
+def test_tls_unknown_server_selected_version_is_not_replaced_by_legacy_tls12(tshark_packets, selected, expected, supported):
+    """Preserva a selecao desconhecida e usa a versao legada apenas sem extensao."""
     tshark_packets({"tls.handshake.type": ["2"],
                     "tls.handshake.version": ["0x0303"],
-                    "tls.handshake.extensions.supported_version": ["0x0500"]})
+                    "tls.handshake.extensions.supported_version": selected})
     [entry] = parser.extract_tls_metadata("future-server-version.pcap")
-    assert entry["tls_version"] == "0x0500"
-    assert entry["supported_versions"] == ["0x0500"]
+    assert entry["tls_version"] == expected
+    assert entry["supported_versions"] == supported
 
 
 @pytest.mark.parametrize("extractor,protocol_fields", [

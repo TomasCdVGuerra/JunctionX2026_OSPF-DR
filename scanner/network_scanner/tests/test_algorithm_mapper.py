@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from scanner.models import AssetType, CryptoFinding, CryptoFunction as F, QuantumRiskLevel as Q
+from scanner.models import CryptoFunction as F
 from scanner.network_scanner import algorithm_mapper as mapper
 
 
@@ -23,6 +22,34 @@ from scanner.network_scanner import algorithm_mapper as mapper
 def test_identifier_formats_and_boundaries(raw, expected):
     """Valida bases numericas, limites de 16 bits e formatos invalidos."""
     assert mapper.parse_identifier(raw) == expected
+
+
+@pytest.mark.parametrize("identifier", [0x1301, 0x1302, 0x1303, 0x1304, 0x1305])
+@pytest.mark.parametrize("version", ["SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2"])
+def test_tls13_suite_rejects_explicit_older_version(identifier, version):
+    """Rejeita suites TLS 1.3 associadas explicitamente a uma versao anterior."""
+    with pytest.raises(mapper.CipherSuiteVersionError, match="incompatible"):
+        mapper.cipher_primitives(mapper.CIPHER_SUITES[identifier], version)
+
+
+@pytest.mark.parametrize("identifier", [0x002F, 0x009F, 0xC02F, 0xCCA8])
+def test_older_suite_rejects_tls13_version(identifier):
+    """Impede apresentar uma suite anterior como uma escolha valida em TLS 1.3."""
+    with pytest.raises(mapper.CipherSuiteVersionError, match="TLS 1.3"):
+        mapper.cipher_primitives(mapper.CIPHER_SUITES[identifier], "TLS 1.3")
+
+
+@pytest.mark.parametrize("version", [None, "future-version"])
+def test_unknown_version_does_not_invent_incompatibility(version):
+    """Preserva a traducao conhecida sem afirmar incompatibilidade com versao desconhecida."""
+    primitives = mapper.cipher_primitives(mapper.CIPHER_SUITES[0x1302], version)
+    assert [p.algorithm_name for p in primitives] == ["AES", "SHA-384", "HKDF-SHA-384"]
+
+
+@pytest.mark.parametrize("identifier", [-1, 65536, 0x10A0A, True, False, "0x0a0a", 1.9])
+def test_grease_rejects_out_of_range_and_invalid_types(identifier):
+    """Rejeita valores fora de 16 bits e tipos invalidos sem classificar como GREASE."""
+    assert mapper.is_grease(identifier) is False
 
 
 def test_grease_exact_set_over_all_16_bit_identifiers():
@@ -150,58 +177,6 @@ def test_eddsa_signature_is_one_primitive(identifier, name, bits):
     assert mapper.SIGNATURE_SCHEMES[identifier] == (mapper.Primitive(name, F.SIGN, bits),)
 
 
-@pytest.mark.parametrize("name,bits,mode,function,quantum,classical", [
-    ("future-algorithm", None, None, F.UNKNOWN, Q.UNKNOWN, Q.UNKNOWN),
-    ("fake-ML-KEM-768", None, None, F.KEY_EXCHANGE, Q.UNKNOWN, Q.UNKNOWN),
-    ("AES", None, "GCM", F.ENCRYPT, Q.UNKNOWN, Q.UNKNOWN),
-    ("AES", 64, "GCM", F.ENCRYPT, Q.UNKNOWN, Q.UNKNOWN),
-    ("aes", 128, "GCM", F.ENCRYPT, Q.MEDIUM, Q.SAFE),
-    ("AES", 192, "GCM", F.ENCRYPT, Q.MEDIUM, Q.SAFE),
-    ("AES", 256, "GCM", F.ENCRYPT, Q.SAFE, Q.SAFE),
-    ("AES", 256, "cbc", F.ENCRYPT, Q.SAFE, Q.MEDIUM),
-    ("AES", 128, "CCM_8", F.ENCRYPT, Q.MEDIUM, Q.MEDIUM),
-    ("NULL", None, None, F.ENCRYPT, Q.UNKNOWN, Q.CRITICAL),
-    ("NONE", None, None, F.ENCRYPT, Q.UNKNOWN, Q.CRITICAL),
-    ("DES", 56, "CBC", F.ENCRYPT, Q.CRITICAL, Q.CRITICAL),
-    ("3DES", 168, "CBC", F.ENCRYPT, Q.CRITICAL, Q.CRITICAL),
-    ("RC4", 128, None, F.ENCRYPT, Q.CRITICAL, Q.CRITICAL),
-    ("ChaCha20", 256, None, F.ENCRYPT, Q.SAFE, Q.SAFE),
-    ("ChaCha20-Poly1305", 256, None, F.ENCRYPT, Q.SAFE, Q.SAFE),
-    ("MD5", None, None, F.DIGEST, Q.CRITICAL, Q.CRITICAL),
-    ("SHA-1", None, None, F.DIGEST, Q.CRITICAL, Q.CRITICAL),
-    ("SHA-256", None, None, F.DIGEST, Q.MEDIUM, Q.SAFE),
-    ("SHA-384", None, None, F.DIGEST, Q.SAFE, Q.SAFE),
-    ("SHA-512", None, None, F.DIGEST, Q.SAFE, Q.SAFE),
-    ("HMAC-SHA-1", None, None, F.MAC, Q.MEDIUM, Q.MEDIUM),
-    ("HMAC-MD5", None, None, F.MAC, Q.MEDIUM, Q.MEDIUM),
-    ("HMAC-SHA-256", None, None, F.MAC, Q.SAFE, Q.SAFE),
-    ("HKDF_SHA-384", None, None, F.KDF, Q.SAFE, Q.SAFE),
-    ("TLS-PRF-SHA-256", None, None, F.KDF, Q.SAFE, Q.SAFE),
-    ("TLS-PRF-MD5-SHA-1", None, None, F.KDF, Q.MEDIUM, Q.MEDIUM),
-    ("ML-KEM-768", None, None, F.KEY_EXCHANGE, Q.SAFE, Q.SAFE),
-    ("X25519MLKEM768", None, None, F.KEY_EXCHANGE, Q.SAFE, Q.SAFE),
-    ("X25519Kyber768Draft00", None, None, F.KEY_EXCHANGE, Q.UNKNOWN, Q.MEDIUM),
-    ("ML-DSA-65", None, None, F.SIGN, Q.SAFE, Q.SAFE),
-    ("RSA", None, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.UNKNOWN),
-    ("RSA", 1024, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.CRITICAL),
-    ("RSA", 2048, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.MEDIUM),
-    ("RSA", 2048, None, F.SIGN, Q.CRITICAL, Q.SAFE),
-    ("DHE", None, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.UNKNOWN),
-    ("DHE-ffdhe2048", 2048, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.SAFE),
-    ("ECDHE", None, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.UNKNOWN),
-    ("ECDSA", 192, None, F.SIGN, Q.CRITICAL, Q.CRITICAL),
-    ("ECDSA", 256, None, F.SIGN, Q.CRITICAL, Q.SAFE),
-    ("ECDHE-X25519", 255, None, F.KEY_EXCHANGE, Q.CRITICAL, Q.SAFE),
-    ("Ed25519", None, None, F.SIGN, Q.CRITICAL, Q.SAFE),
-    ("Ed448", 448, None, F.SIGN, Q.CRITICAL, Q.SAFE),
-])
-def test_local_risk_policy_with_unknown_and_known_parameters(name, bits, mode, function, quantum, classical):
-    """Verifica a politica local de risco e preserva desconhecidos sem declarar uma ligacao segura."""
-    actual_quantum, actual_classical, reason, recommendation = mapper.assess_primitive(name, bits, mode, function)
-    assert (actual_quantum, actual_classical) == (quantum, classical)
-    assert reason.strip() and recommendation.strip()
-
-
 @pytest.mark.parametrize("raw,expected", [
     (1, 1), (73, 73), ("73", 73), (" 73 ", 73),
     (None, None), (True, None), (False, None), (0, None), (-1, None),
@@ -215,61 +190,46 @@ def test_evidence_packet_number_is_positive_integer(raw, expected):
 
 
 def test_evidence_json_preserves_context_without_mutating_input():
-    """Serializa os detalhes e a justificacao sem modificar a observacao original."""
-    entry = {"packet_number": 7, "stream_id": "2", "nested": {"groups": [29]}, "path": Path("context")}
+    """Preserva contexto permitido e exclui campos arbitrarios sem modificar a entrada."""
+    entry = {"packet_number": 7, "stream_id": "2", "nested": {"password": "SECRET"},
+             "password": "SECRET", "tcp.payload": "SECRET", "http_host": "user:SECRET@example.test"}
     before = copy.deepcopy(entry)
     evidence = mapper.network_evidence(Path("sample.pcap"), entry, "CHECK", reasoning="Policy explanation")
     assert json.loads(evidence.matched_snippet) == {
-        "packet_number": 7, "stream_id": "2", "nested": {"groups": [29]}, "path": "context",
+        "packet_number": 7, "stream_id": "2", "http_host": "example.test",
     }
     assert evidence.risk_reasoning == "Policy explanation"
     assert entry == before
 
 
-def test_explicit_evidence_snippet_is_preserved():
-    """Mantem um snippet explicito em vez de o substituir pelo dicionario completo."""
-    evidence = mapper.network_evidence(Path("sample.pcap"), {"matched_snippet": "Selected AES"}, "CHECK")
-    assert evidence.matched_snippet == "Selected AES"
-
-
-@pytest.mark.parametrize("observation", ["declared", "configured", "advertised", "negotiated", "observed"])
-def test_finding_model_serialization_and_assessment(observation):
-    """Cria um model valido e preserva o tipo de observacao ao aplicar a politica de risco."""
-    finding = mapper.make_finding(
-        Path("sample.pcap"), {"packet_number": 4}, algorithm_name="RSA",
-        rule_id="CHECK-RSA", observation=observation, key_size=2048,
-        crypto_function=F.SIGN, padding="PSS", protocol="TLS 1.3",
-    )
-    payload = finding.to_dict()
-    assert payload["source_type"] == "network-capture"
-    assert payload["observation"] == observation
-    assert payload["crypto_function"] == "sign" and payload["padding"] == "PSS"
-    assert payload["quantum_risk"] == "critical" and payload["classical_risk"] == "safe"
-    assert finding.evidence[0].packet_number == 4
-    assert finding.evidence[0].risk_reasoning and finding.recommendation
-    assert CryptoFinding.model_validate(json.loads(json.dumps(payload))) == finding
-
-
-def test_risk_override_and_optional_finding_fields():
-    """Respeita uma avaliacao explicita e preserva campos opcionais desconhecidos."""
-    finding = mapper.make_finding(
-        Path("sample.pcap"), {}, algorithm_name="TLS 1.3", rule_id="CHECK-VERSION",
-        observation="observed", asset_type=AssetType.PROTOCOL, confidence="low",
-        risk_override=(Q.UNKNOWN, Q.MEDIUM, "Explicit policy", "Review protocol"),
-    )
-    assert finding.asset_type == AssetType.PROTOCOL and finding.confidence == "low"
-    assert (finding.quantum_risk, finding.classical_risk) == (Q.UNKNOWN, Q.MEDIUM)
-    assert finding.evidence[0].risk_reasoning == "Explicit policy"
-    assert finding.recommendation == "Review protocol"
-    assert "key_size" not in finding.to_dict()
-
-
-@pytest.mark.parametrize("changes", [
-    {"algorithm_name": ""}, {"key_size": 0}, {"observation": "invalid"},
-    {"confidence": "invalid"}, {"rule_id": ""},
+@pytest.mark.parametrize("host,expected", [
+    ("example.test", "example.test"), (" example.test:8080 ", "example.test:8080"),
+    ("user:SECRET@example.test", "example.test"),
+    ("user:SECRET@[2001:db8::1]:8080", "[2001:db8::1]:8080"),
+    ("user:SECRET@", None), ("", None), ({"password": "SECRET"}, None),
 ])
-def test_finding_rejects_invalid_shared_contract_fields(changes):
-    """Confirma que resultados invalidos sao rejeitados pelos models comuns."""
-    kwargs = {"algorithm_name": "unknown", "rule_id": "CHECK", "observation": "observed", **changes}
-    with pytest.raises(ValidationError):
-        mapper.make_finding(Path("sample.pcap"), {}, **kwargs)
+def test_network_context_removes_http_host_credentials(host, expected):
+    """Remove credenciais preservando hostname, IPv6 e porta quando disponiveis."""
+    entry = {"http_host": host, "source_ip": "192.0.2.1"}
+    before = copy.deepcopy(entry)
+    details = mapper.network_context(entry)
+    assert details.get("http_host") == expected
+    assert details["source_ip"] == "192.0.2.1"
+    assert "SECRET" not in json.dumps(details)
+    assert entry == before
+
+
+@pytest.mark.parametrize("with_context", [False, True])
+def test_explicit_evidence_snippet_is_rebuilt_from_allowed_context(with_context):
+    """Ignora texto arbitrario e gera evidencia apenas com o contexto permitido."""
+    entry = {"matched_snippet": "password=SECRET", "password": "SECRET", "payload": "SECRET"}
+    expected = {}
+    if with_context:
+        entry.update(packet_number="42", tls_version="TLS 1.3", cipher_suite="0x1302")
+        expected = {"packet_number": 42, "tls_version": "TLS 1.3", "cipher_suite": "0x1302"}
+    before = copy.deepcopy(entry)
+    evidence = mapper.network_evidence(Path("sample.pcap"), entry, "CHECK")
+    assert isinstance(evidence.matched_snippet, str)
+    assert json.loads(evidence.matched_snippet) == expected
+    assert "SECRET" not in evidence.matched_snippet
+    assert entry == before

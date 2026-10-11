@@ -12,16 +12,9 @@ from typing import Any
 
 from scanner.models import AssetType, CryptoFinding, CryptoFunction, Evidence
 from scanner.network_scanner.algorithm_mapper import (
-    CIPHER_SUITES, GROUPS, SIGNATURE_SCHEMES, Observation, Primitive,
-    cipher_primitives, identifier_label, is_grease, parse_identifier,
-)
-
-
-_CONTEXT_FIELDS = (
-    "packet_number", "stream_id", "timestamp", "source_ip", "destination_ip",
-    "source_port", "destination_port", "server_name", "handshake_type",
-    "tls_version", "protocol_banner", "is_server", "role_source",
-    "protocol", "http_method", "http_host",
+    CIPHER_SUITES, GROUPS, SIGNATURE_SCHEMES, Observation, Primitive, CipherSuiteVersionError,
+    cipher_primitives, identifier_label, is_grease, parse_identifier, network_context,
+    SSH_FIELDS, SSH_MARKERS,
 )
 
 
@@ -46,8 +39,7 @@ def _finding(path: Path, entry: dict, primitive: Primitive, observation: Observa
              rule_id: str, protocol: str | None, *,
              asset_type: AssetType = AssetType.ALGORITHM,
              context: dict | None = None) -> CryptoFinding:
-    details = {key: entry[key] for key in _CONTEXT_FIELDS if entry.get(key) is not None}
-    details.update(context or {})
+    details = network_context({**entry, **(context or {})})
     raw_packet = entry.get("packet_number")
     packet = None
     if isinstance(raw_packet, int) and not isinstance(raw_packet, bool):
@@ -102,7 +94,16 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
                 primitives = [Primitive(f"TLS-CIPHER-{identifier_label(value)}", CryptoFunction.UNKNOWN)]
             else:
                 context["cipher_suite_name"] = suite.name
-                primitives = cipher_primitives(suite, protocol)
+                mapping_version = protocol
+                if client:
+                    # Proposals can include suites from different TLS versions.
+                    mapping_version = ("TLS 1.3" if suite.tls13 else
+                                       protocol if protocol in {"TLS 1.0", "TLS 1.1", "TLS 1.2"} else None)
+                try:
+                    primitives = cipher_primitives(suite, mapping_version)
+                except CipherSuiteVersionError:
+                    context["mapping_status"] = "incompatible-version"
+                    primitives = [Primitive(f"TLS-CIPHER-{identifier_label(value)}", CryptoFunction.UNKNOWN)]
             for primitive in primitives:
                 # In older suites, the suffix names a keyed MAC/PRF. Do not
                 # report that alone as evidence of a standalone digest use.
@@ -137,63 +138,6 @@ def _tls_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
     return findings
 
 
-_SSH_KEX = {
-    "curve25519-sha256": Primitive("ECDHE-X25519", CryptoFunction.KEY_EXCHANGE, 255),
-    "curve25519-sha256@libssh.org": Primitive("ECDHE-X25519", CryptoFunction.KEY_EXCHANGE, 255),
-    "ecdh-sha2-nistp256": Primitive("ECDHE-secp256r1", CryptoFunction.KEY_EXCHANGE, 256),
-    "ecdh-sha2-nistp384": Primitive("ECDHE-secp384r1", CryptoFunction.KEY_EXCHANGE, 384),
-    "ecdh-sha2-nistp521": Primitive("ECDHE-secp521r1", CryptoFunction.KEY_EXCHANGE, 521),
-    "diffie-hellman-group1-sha1": Primitive("DHE", CryptoFunction.KEY_EXCHANGE, 1024),
-    "diffie-hellman-group14-sha1": Primitive("DHE", CryptoFunction.KEY_EXCHANGE, 2048),
-    "diffie-hellman-group14-sha256": Primitive("DHE", CryptoFunction.KEY_EXCHANGE, 2048),
-    "diffie-hellman-group16-sha512": Primitive("DHE", CryptoFunction.KEY_EXCHANGE, 4096),
-    "diffie-hellman-group18-sha512": Primitive("DHE", CryptoFunction.KEY_EXCHANGE, 8192),
-    "diffie-hellman-group-exchange-sha1": Primitive("DHE", CryptoFunction.KEY_EXCHANGE),
-    "diffie-hellman-group-exchange-sha256": Primitive("DHE", CryptoFunction.KEY_EXCHANGE),
-    "mlkem768x25519-sha256": Primitive("MLKEM768X25519", CryptoFunction.KEY_EXCHANGE),
-    "sntrup761x25519-sha512": Primitive("SNTRUP761X25519", CryptoFunction.KEY_EXCHANGE),
-    "sntrup761x25519-sha512@openssh.com": Primitive("SNTRUP761X25519", CryptoFunction.KEY_EXCHANGE),
-}
-_SSH_HOST = {
-    name: Primitive("RSA", CryptoFunction.SIGN, padding="PKCS1v15")
-    for name in ("ssh-rsa", "rsa-sha2-256", "rsa-sha2-512")
-}
-_SSH_HOST.update({
-    "ssh-dss": Primitive("DSA", CryptoFunction.SIGN),
-    "ssh-ed25519": Primitive("Ed25519", CryptoFunction.SIGN, 255),
-    **{name: Primitive("ECDSA", CryptoFunction.SIGN, bits)
-       for name, bits in (("ecdsa-sha2-nistp256", 256), ("ecdsa-sha2-nistp384", 384),
-                          ("ecdsa-sha2-nistp521", 521))},
-})
-_SSH_CIPHERS = {
-    f"aes{bits}-{mode}": Primitive("AES", CryptoFunction.ENCRYPT, bits, mode.upper())
-    for bits in (128, 192, 256) for mode in ("cbc", "ctr")
-}
-_SSH_CIPHERS.update({
-    **{f"aes{bits}-gcm@openssh.com": Primitive("AES", CryptoFunction.ENCRYPT, bits, "GCM")
-       for bits in (128, 256)},
-    "3des-cbc": Primitive("3DES", CryptoFunction.ENCRYPT, 168, "CBC"),
-    # 256 describes the underlying ChaCha key, not all SSH keying material.
-    "chacha20-poly1305@openssh.com": Primitive("ChaCha20-Poly1305", CryptoFunction.ENCRYPT, 256),
-    "none": Primitive("NULL", CryptoFunction.ENCRYPT),
-})
-_SSH_MACS = {
-    wire + suffix: Primitive(name, CryptoFunction.MAC)
-    for wire, name in (("hmac-sha1", "HMAC-SHA-1"), ("hmac-sha2-256", "HMAC-SHA-256"),
-                       ("hmac-sha2-512", "HMAC-SHA-512"), ("hmac-md5", "HMAC-MD5"))
-    for suffix in ("", "-etm@openssh.com")
-}
-_SSH_FIELDS = (
-    ("kex_algorithms", _SSH_KEX, CryptoFunction.KEY_EXCHANGE),
-    ("server_host_key_algorithms", _SSH_HOST, CryptoFunction.SIGN),
-    ("encryption_client_to_server", _SSH_CIPHERS, CryptoFunction.ENCRYPT),
-    ("encryption_server_to_client", _SSH_CIPHERS, CryptoFunction.ENCRYPT),
-    ("mac_client_to_server", _SSH_MACS, CryptoFunction.MAC),
-    ("mac_server_to_client", _SSH_MACS, CryptoFunction.MAC),
-)
-_SSH_MARKERS = {"ext-info-c", "ext-info-s", "kex-strict-c-v00@openssh.com", "kex-strict-s-v00@openssh.com"}
-
-
 def _ssh_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
     findings = []
     for entry in entries:
@@ -204,11 +148,11 @@ def _ssh_findings(entries: list[dict], path: Path) -> list[CryptoFinding]:
             findings.append(_finding(path, entry, Primitive("SSH", CryptoFunction.UNKNOWN),
                                      "observed", "NETWORK-SSH-BANNER", protocol,
                                      asset_type=AssetType.PROTOCOL))
-        for field, registry, function in _SSH_FIELDS:
+        for field, registry, function in SSH_FIELDS:
             values = [name.strip() for item in _values(entry.get(field))
                       for name in item.split(",") if name.strip()]
             for value in dict.fromkeys(values):
-                if field == "kex_algorithms" and value in _SSH_MARKERS:
+                if field == "kex_algorithms" and value in SSH_MARKERS:
                     continue
                 primitive = registry.get(value) or Primitive(value, function)
                 findings.append(_finding(path, entry, primitive, "advertised",

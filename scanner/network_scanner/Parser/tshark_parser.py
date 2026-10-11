@@ -14,6 +14,7 @@ import subprocess
 from typing import Any
 
 from scanner.models import CryptoFinding
+from scanner.network_scanner.algorithm_mapper import is_grease, parse_identifier
 from scanner.network_scanner.model_adapter import findings_from_metadata
 
 logger = logging.getLogger(__name__)
@@ -147,8 +148,16 @@ def extract_tls_metadata(pcap_filepath: str) -> list[dict[str, Any]]:
         handshake_type = hello_types.pop()
         versions_raw = _get_field_list(layers, "tls.handshake.extensions.supported_version")
         known_versions = [v for v in versions_raw if _number(v) in range(768, 773)]
+        supported_versions = (
+            [v for v in versions_raw
+             if parse_identifier(v) is not None and not is_grease(parse_identifier(v))]
+            if handshake_type == 1 else versions_raw
+        )
         version_raw = (max(known_versions, key=lambda v: _number(v) or 0) if known_versions
                        else _get_field_first(layers, ["tls.handshake.version", "tls.record.version"]))
+        if handshake_type == 2 and versions_raw:
+            # The server selection overrides legacy fields even when unknown.
+            version_raw = versions_raw[0]
         ciphers = _get_field_list(layers, "tls.handshake.ciphersuite")
         shares = _get_field_list(layers, "tls.handshake.extensions_key_share_group")
         random_value = str(_get_field_first(layers, ["tls.handshake.random"], "")).replace(":", "").lower()
@@ -157,7 +166,7 @@ def extract_tls_metadata(pcap_filepath: str) -> list[dict[str, Any]]:
             **_packet_metadata(layers),
             "handshake_type": "Client Hello" if handshake_type == 1 else "Server Hello",
             "tls_version": _normalize_tls_version(version_raw),
-            "supported_versions": [_normalize_tls_version(v) for v in known_versions],
+            "supported_versions": [_normalize_tls_version(v) for v in supported_versions],
             "cipher_suites": ciphers,
             "selected_cipher": ciphers[0] if handshake_type == 2 and len(ciphers) == 1 and not retry else None,
             "supported_groups": _get_field_list(layers, "tls.handshake.extensions_supported_group"),
