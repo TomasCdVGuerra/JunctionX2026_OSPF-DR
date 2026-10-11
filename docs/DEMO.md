@@ -2,13 +2,15 @@
 
 ## Preparação
 
-Usar Python 3.13, ativar `.venv` e executar:
+Com Python 3.13 e TShark instalados, executar em Windows:
 
-```bash
-python -m pip install -r requirements.txt
-python -m pytest -q
-python -m streamlit run dashboard.py
+```powershell
+py -3.13 run.py --test --require-tshark
+py -3.13 run.py --require-tshark
 ```
+
+Em Linux/macOS, substituir `py -3.13` por `python3.13`. Não é necessário
+criar ou ativar a venv manualmente. A dashboard abre em http://localhost:8501.
 
 Para PCAP real, instalar Wireshark/TShark. A deteção procura `TSHARK_PATH`,
 `PATH` e as pastas habituais do Wireshark. Os testes unitários de rede usam
@@ -110,8 +112,8 @@ o percurso até ao dashboard e aos exports.
 
 Este passo exige outro computador; os testes locais não o substituem.
 
-1. Num checkout atualizado, com Python 3.13, executar `run.ps1 -Mode test`
-   ou `bash run.sh --test`. Confirmar também `python -m pip check` no ambiente.
+1. Num checkout atualizado, com Python 3.13, executar `py -3.13 run.py --test`
+   ou `python3.13 run.py --test`. O script também executa pip check no ambiente.
 2. Instalar TShark separadamente e confirmar que é detetado. Sem TShark,
    os testes offline podem passar e o teste de captura real fica skipped.
 3. Iniciar a dashboard e carregar os inputs da demo. Confirmar as contagens
@@ -122,7 +124,7 @@ Este passo exige outro computador; os testes locais não o substituem.
 5. Aplicar filtros, selecionar um finding e exportar CSV, ações e CBOM.
    Reimportar o CBOM e confirmar identidade e estado de cobertura preservados.
 6. Após integrar o workflow no GitHub, confirmar execução bem-sucedida dos
-   jobs Windows/Linux. O job Linux exige a validação real com TShark.
+   jobs Windows/Linux/macOS. Linux e macOS exigem a validação real com TShark.
 
 Registar sistema operativo, Python, TShark, resultado dos testes e quaisquer
 diferenças observadas. As classificações de HMAC/HKDF/PRF SHA-2 na rede agora

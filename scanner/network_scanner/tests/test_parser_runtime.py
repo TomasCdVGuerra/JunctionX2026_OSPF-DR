@@ -72,8 +72,12 @@ def test_standard_installation_discovery(monkeypatch, platform, environment, ins
     """Verifica a descoberta do TShark nos caminhos de instalacao habituais de Windows e macOS."""
     monkeypatch.setattr(parser, "os", SimpleNamespace(name=platform, environ=environment))
     monkeypatch.setattr(parser.shutil, "which", lambda _: None)
-    monkeypatch.setattr(parser.Path, "is_file", lambda candidate: candidate == Path(installed))
-    assert parser.find_tshark_binary() == str(Path(installed))
+    # Simulated Windows paths keep backslashes when this test runs on POSIX.
+    def normalized(path):
+        return str(path).replace("\\", "/")
+
+    monkeypatch.setattr(parser.Path, "is_file", lambda candidate: normalized(candidate) == normalized(installed))
+    assert normalized(parser.find_tshark_binary()) == normalized(installed)
 
 
 @pytest.mark.parametrize("platform", ["nt", "posix"])

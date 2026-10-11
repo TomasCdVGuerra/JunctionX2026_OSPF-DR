@@ -12,30 +12,43 @@ QuantumTrace is an automated post-quantum cryptographic discovery and posture ma
 
 ## ⚡ Quickstart
 
-### 1. Installation
+Install **Python 3.13** first. Install **Wireshark/TShark** separately to analyze
+real PCAP files; source and cloud scans work without it. Internet access is
+needed for the first dependency installation.
 
-Windows PowerShell: `./run.ps1` prepares Python 3.13's `.venv`, installs
-`requirements.txt`, checks TShark availability and starts the dashboard.
-Use `./run.ps1 -Mode setup` for setup only or `./run.ps1 -Mode test` for the full suite.
-Linux/macOS: `bash run.sh --ui` (`--setup` / `--test` are also supported).
-TShark/Wireshark is installed separately and is required only for real PCAP scans.
+From the repository folder, run one command:
 
-```bash
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+```powershell
+# Windows
+py -3.13 run.py
 ```
 
-### 2. Launch the Analytics Dashboard
+```bash
+# Linux / macOS
+python3.13 run.py
+```
+
+The script creates/reuses `.venv`, installs the pinned `requirements.txt`,
+checks dependencies and TShark, then launches the dashboard at
+**http://localhost:8501**. No environment activation is needed. Subsequent runs
+skip downloads when the pinned dependencies already match. Stop with Ctrl+C.
+
+An incompatible existing `.venv` is preserved: rename it and rerun.
+If port 8501 is occupied, add `--port 8502`.
+
+### Other modes
 
 > **Note**: The Streamlit dashboard is the primary supported interface for this release. The CLI (`main.py`) is temporarily disabled while cloud and network scan pipelines are being unified.
 
-```bash
-streamlit run dashboard.py
+```powershell
+# Prepare only; require full PCAP support for the demo
+py -3.13 run.py --setup --require-tshark
+# Prepare and run all tests
+py -3.13 run.py --test
 ```
+
+On Linux/macOS use `python3.13` with the same arguments. `run.py` is the
+single setup and launch entrypoint on all three operating systems.
 
 PCAP uploads use the real network scanner through `scanner/pcap_scanner.py`.
 Install Wireshark with TShark separately; it is not a Python dependency.
@@ -44,7 +57,7 @@ On Windows, if detection fails, set this before starting Streamlit:
 
 ```powershell
 $env:TSHARK_PATH = 'C:\Program Files\Wireshark\tshark.exe'
-python -m streamlit run dashboard.py
+py -3.13 run.py --require-tshark
 ```
 
 Network findings retain the protocol analyzers' assessments and packet evidence;
@@ -52,11 +65,8 @@ the dashboard does not overwrite them with a primitive-only reassessment.
 Advertised capabilities, negotiated selections and observed plaintext remain
 separate findings. A TShark failure is reported instead of using a silent fallback.
 
-### 3. Run the Test Suite
-
-```bash
-python -m pytest -q
-```
+For the submission rehearsal, use `--test --require-tshark`, then run the
+dashboard and follow [the demo checklist](docs/DEMO.md).
 
 ---
 
@@ -82,7 +92,7 @@ For detailed architecture diagrams, cryptographic threat models, CBOM schema map
   * **Input processing coverage**: Complete, Partial or Unknown is displayed independently of finding posture. Failures and limited discovery remain visible even when discovered findings are safe. Input IDs link repeated filenames to findings, CSV and CBOM.
 
 Dependencies are pinned in `requirements.txt` from a validated clean Python 3.13
-environment. GitHub Actions tests Windows and Linux; Linux also requires a real
+environment. GitHub Actions is configured for Windows, Linux and macOS; Linux/macOS require a real
 TShark check against reviewed packets in the supplied capture. See
 [risk policy](docs/RISK_POLICY.md) for shared criteria and protocol exceptions.
   * **Independent Executive Metrics**: Executive metrics are calculated from the complete active scan inventory, ensuring high-level posture remains accurate while search and filter controls narrow detailed tabular views.

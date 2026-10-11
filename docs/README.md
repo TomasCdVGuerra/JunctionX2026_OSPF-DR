@@ -9,24 +9,30 @@ preserva evidências e exporta CSV e CBOM CycloneDX 1.6.
 Todos usam Python 3.13 e as dependências de requirements.txt.
 
 ```powershell
-# Windows: prepara .venv, instala dependências e inicia o dashboard
-.\run.ps1
+# Windows: cria .venv, instala dependências e inicia a dashboard
+py -3.13 run.py
 # Apenas preparar o ambiente
-.\run.ps1 -Mode setup
+py -3.13 run.py --setup
 # Preparar o ambiente e executar todos os testes
-.\run.ps1 -Mode test
+py -3.13 run.py --test --require-tshark
 ```
 
 ```bash
-# Linux/macOS: requer python3.13; também aceita .venv existente em Git Bash
-bash run.sh --ui
-bash run.sh --setup
-bash run.sh --test
+# Linux/macOS
+python3.13 run.py
+python3.13 run.py --setup
+python3.13 run.py --test --require-tshark
 ```
 
 Wireshark/TShark é uma instalação externa necessária apenas para PCAP real.
 A deteção procura TSHARK_PATH, PATH e as pastas habituais do Wireshark.
 O script verifica a presença do executável; não instala Wireshark.
+
+Não é necessário ativar a venv. `--require-tshark` interrompe o arranque
+se TShark não existir ou não conseguir executar. Sem esse argumento, o script
+avisa da indisponibilidade de PCAP e permite continuar com código/Cloud.
+As dependências já instaladas nas versões fixadas não voltam a ser descarregadas.
+run.py é o único script de arranque. Uma venv incompatível é preservada.
 
 Para instalação manual, ver [DEV_SETUP.md](DEV_SETUP.md).
 A interface suportada é Streamlit. main.py está desativado; a CLI não está
@@ -140,9 +146,9 @@ Esta amostra não mede precisão/recall globais. Testes de rede com metadata
 controlada não substituem uma execução real com TShark.
 
 O teste dos pacotes revistos também corre com TShark real quando disponível.
-Na CI Linux é obrigatório; em máquinas sem TShark esse teste fica skipped,
+Na CI Linux/macOS é obrigatório; em máquinas sem TShark esse teste fica skipped,
 mantendo os testes offline. `.github/workflows/tests.yml` executa a suite
-em Windows e Linux com Python 3.13 após push/PR.
+em Windows, Linux e macOS com Python 3.13 após push/PR.
 
 Ver [DEMO.md](DEMO.md) para uploads, contagens observadas e percurso da demo.
 
@@ -154,7 +160,7 @@ Ver [DEMO.md](DEMO.md) para uploads, contagens observadas e percurso da demo.
 - Cobertura Cloud é específica dos exports suportados e das policies do catálogo.
 - Um resultado vazio não prova ausência de criptografia.
 - requirements.txt fixa versões diretas e transitivas do ambiente limpo
-  validado em Windows/Python 3.13. Não inclui hashes; a CI verifica Linux.
+  validado em Windows/Python 3.13. Não inclui hashes; a CI verifica Linux/macOS.
 - Falta alargar a referência manual a todos os exemplos e medir omissões/falsos positivos.
 - Agrupamento por recurso/sessão, análise entre funções, harmonização adicional
   das políticas e plano de migração priorizado são próximas evoluções.

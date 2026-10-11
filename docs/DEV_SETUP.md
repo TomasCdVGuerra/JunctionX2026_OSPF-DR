@@ -1,4 +1,14 @@
-## Comandos para Python Environment (criar pela primeira vez):
+## Arranque recomendado: um comando
+
+Com Python 3.13 instalado, executar `py -3.13 run.py` em Windows ou
+`python3.13 run.py` em Linux/macOS. O script cria/reutiliza a venv, instala
+requirements.txt, verifica dependências e inicia a dashboard. Não exige ativação.
+
+`--setup` prepara sem abrir a interface; `--test` executa a suite completa;
+`--require-tshark` exige disponibilidade real de TShark para a demo de PCAP.
+run.py é o único ponto de entrada de instalação e arranque nos três sistemas.
+
+## Configuração manual alternativa
 1. python -m venv .venv (ou py -3.13 -m venv .venv se tiverem versões diferentes desta)
 
 2. Ativar o ambiente (escolher o comando com base no OS/terminal):
