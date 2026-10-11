@@ -12,82 +12,61 @@ QuantumTrace is an automated post-quantum cryptographic discovery and posture ma
 
 ## ⚡ Quickstart
 
-QuantumTrace includes cross-platform bootstrap scripts ([run.sh](run.sh) for macOS/Linux and [run.ps1](run.ps1) for Windows) that automate the entire setup and launch process in a single command.
+Install **Python 3.13** first. Install **Wireshark/TShark** separately to analyze
+real PCAP files; source and cloud scans work without it. Internet access is
+needed for the first dependency installation.
 
-### Automated Launchers (`run.sh` & `run.ps1`)
+From the repository folder, run one command:
 
-Both scripts automatically perform the following steps:
-1. **Directory Alignment**: Resolves to the repository root directory regardless of invocation path.
-2. **Virtual Environment Bootstrap**: Automatically creates a `.venv` using **Python 3.13** (`python3.13` on macOS/Linux, `py -3.13` on Windows) if not present.
-3. **Strict Python 3.13 Check**: Verifies that the `.venv` interpreter strictly matches Python 3.13 (`sys.version_info[:2] == (3, 13)`).
-4. **Dependency Sync**: Automatically installs and syncs dependencies from `requirements.txt`.
-5. **Pre-flight Health Check**: Runs `scripts/check_environment.py` to validate system prerequisites and tool availability.
-6. **Execution by Mode**: Launches the Streamlit dashboard, executes the test suite, or finishes after setup.
-
-#### Linux / macOS ([run.sh](run.sh))
-```bash
-# Launch the Streamlit dashboard (default)
-bash run.sh
-# or explicitly:
-bash run.sh --ui
-
-# Run the test suite via pytest
-bash run.sh --test
-
-# Setup environment & dependencies only (useful for CI/CD or initial setup)
-bash run.sh --setup
-```
-
-#### Windows PowerShell ([run.ps1](run.ps1))
 ```powershell
-# Launch the Streamlit dashboard (default)
-.\run.ps1
-# or explicitly:
-.\run.ps1 -Mode ui
-
-# Run the test suite via pytest
-.\run.ps1 -Mode test
-
-# Setup environment & dependencies only
-.\run.ps1 -Mode setup
+# Windows
+py -3.13 run.py
 ```
-
----
-
-### Manual Setup (Alternative)
-
-If you prefer to manage the virtual environment manually:
 
 ```bash
-# 1. Create and activate Python 3.13 virtual environment
-python3.13 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\Activate.ps1
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Verify environment
-python scripts/check_environment.py
-
-# 4. Launch the dashboard
-streamlit run dashboard.py
-
-# 5. Run the test suite
-python -m pytest -q
+# Linux / macOS
+python3.13 run.py
 ```
 
----
+The script creates/reuses `.venv`, installs the pinned `requirements.txt`,
+checks dependencies and TShark, then launches the dashboard at
+**http://localhost:8501**. No environment activation is needed. Subsequent runs
+skip downloads when the pinned dependencies already match. Stop with Ctrl+C.
 
-### Prerequisites & TShark Configuration
+An incompatible existing `.venv` is preserved: rename it and rerun.
+If port 8501 is occupied, add `--port 8502`.
 
-* **TShark / Wireshark**: Required only for live PCAP packet captures (it is an external system tool, not a Python package). Code and cloud posture scans do not require TShark.
-* The scanner automatically detects `tshark` via `TSHARK_PATH`, system `PATH`, or standard Wireshark installation directories.
-* On Windows, if TShark is installed in a custom location, set the environment variable before starting:
-  ```powershell
-  $env:TSHARK_PATH = 'C:\Program Files\Wireshark\tshark.exe'
-  .\run.ps1
-  ```
-* Network findings preserve the protocol analyzers' packet-level context and assessments; missing TShark reports an explicit diagnostic warning in the UI rather than silently skipping network data.
+### Other modes
+
+> **Note**: The Streamlit dashboard is the primary supported interface for this release. The CLI (`main.py`) is temporarily disabled while cloud and network scan pipelines are being unified.
+
+```powershell
+# Prepare only; require full PCAP support for the demo
+py -3.13 run.py --setup --require-tshark
+# Prepare and run all tests
+py -3.13 run.py --test
+```
+
+On Linux/macOS use `python3.13` with the same arguments. `run.py` is the
+single setup and launch entrypoint on all three operating systems.
+
+PCAP uploads use the real network scanner through `scanner/pcap_scanner.py`.
+Install Wireshark with TShark separately; it is not a Python dependency.
+The scanner searches `TSHARK_PATH`, then `PATH`, then standard Wireshark folders.
+On Windows, if detection fails, set this before starting Streamlit:
+
+```powershell
+$env:TSHARK_PATH = 'C:\Program Files\Wireshark\tshark.exe'
+py -3.13 run.py --require-tshark
+```
+
+Network findings retain the protocol analyzers' assessments and packet evidence;
+the dashboard does not overwrite them with a primitive-only reassessment.
+Advertised capabilities, negotiated selections and observed plaintext remain
+separate findings. A TShark failure is reported instead of using a silent fallback.
+
+For the submission rehearsal, use `--test --require-tshark`, then run the
+dashboard and follow [the demo checklist](docs/DEMO.md).
 
 ---
 
@@ -113,7 +92,7 @@ For detailed architecture diagrams, cryptographic threat models, CBOM schema map
   * **Input processing coverage**: Complete, Partial or Unknown is displayed independently of finding posture. Failures and limited discovery remain visible even when discovered findings are safe. Input IDs link repeated filenames to findings, CSV and CBOM.
 
 Dependencies are pinned in `requirements.txt` from a validated clean Python 3.13
-environment. GitHub Actions tests Windows and Linux; Linux also requires a real
+environment. GitHub Actions is configured for Windows, Linux and macOS; Linux/macOS require a real
 TShark check against reviewed packets in the supplied capture. See
 [risk policy](docs/RISK_POLICY.md) for shared criteria and protocol exceptions.
   * **Independent Executive Metrics**: Executive metrics are calculated from the complete active scan inventory, ensuring high-level posture remains accurate while search and filter controls narrow detailed tabular views.
