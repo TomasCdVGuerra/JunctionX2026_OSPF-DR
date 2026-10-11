@@ -4,8 +4,9 @@ from collections import Counter
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
-sys.path.insert(0, str(AQUI))
-from scanner_completo import scan_file
+ROOT = AQUI.parent
+sys.path.insert(0, str(ROOT / "scanner"))
+from python_scanner import scan_file
 
 amostra = AQUI / "sample_completo.py"
 esperado = Counter()
