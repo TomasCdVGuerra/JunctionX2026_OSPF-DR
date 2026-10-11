@@ -179,11 +179,12 @@ def test_tls_ambiguous_or_missing_hello_type_is_logged_and_skipped(tshark_packet
     assert any("ambiguous" in message.lower() and "41" in message for message in messages)
 
 
-def test_tls_ambiguous_packet_does_not_hide_adjacent_valid_hellos(tshark_packets, caplog):
+@pytest.mark.parametrize("ambiguous_types", [["1", "2"], ["2", "2"], ["1", "1"]])
+def test_tls_ambiguous_packet_does_not_hide_adjacent_valid_hellos(tshark_packets, caplog, ambiguous_types):
     """Verifica que um pacote TLS ambiguo nao impede extrair os hellos validos adjacentes."""
     tshark_packets(
         {"frame.number": ["1"], "tls.handshake.type": ["1"], "tls.handshake.ciphersuite": ["0x1301"]},
-        {"frame.number": ["2"], "tls.handshake.type": ["1", "2"], "tls.handshake.ciphersuite": ["0x1302"]},
+        {"frame.number": ["2"], "tls.handshake.type": ambiguous_types, "tls.handshake.ciphersuite": ["0x1302"]},
         {"frame.number": ["3"], "tls.handshake.type": ["2"], "tls.handshake.ciphersuite": ["0x1303"]},
     )
     with caplog.at_level(logging.WARNING, logger=parser.__name__):
@@ -193,16 +194,35 @@ def test_tls_ambiguous_packet_does_not_hide_adjacent_valid_hellos(tshark_packets
     assert entries[1]["selected_cipher"] == "0x1303"
 
 
-@pytest.mark.xfail(strict=True, reason="Parser collapses repeated ServerHello types into a set, associating flattened fields from multiple hellos as one selection.")
-def test_tls_multiple_server_hellos_in_one_frame_are_logged_and_skipped(tshark_packets, caplog):
-    """Documenta a falha conhecida no reconhecimento de multiplos ServerHello no mesmo pacote como ambiguos."""
-    tshark_packets({"frame.number": ["42"], "tls.handshake.type": ["2", "2"],
+@pytest.mark.parametrize("types", [
+    ["2", "2"], [2, 2], ["0x02", "0X02"], ["2", "0x02", 2],
+    ["1", "1"], [1, 1], ["0x01", "0X01"], ["1", "0x01", 1],
+])
+def test_tls_multiple_hellos_in_one_frame_are_logged_and_skipped(tshark_packets, caplog, types):
+    """Rejeita Hellos repetidos, mesmo quando usam representacoes numericas diferentes."""
+    tshark_packets({"frame.number": ["42"], "tls.handshake.type": types,
                     "tls.handshake.ciphersuite": ["0x1302"],
                     "tls.handshake.extensions_key_share_group": ["0x11ec"]})
     with caplog.at_level(logging.WARNING, logger=parser.__name__):
-        assert parser.extract_tls_metadata("repeated-server-hello.pcap") == []
+        assert parser.extract_tls_metadata("repeated-hello.pcap") == []
     assert any("ambiguous" in record.getMessage().lower() and "42" in record.getMessage()
                for record in caplog.records if record.name == parser.__name__)
+
+
+@pytest.mark.parametrize("types", [["2", "11", "12", "14"], [2, "11", "0x0e"]])
+def test_tls_single_server_hello_with_other_messages_preserves_selection(tshark_packets, caplog, types):
+    """Preserva um unico ServerHello acompanhado por mensagens que nao sao Hello."""
+    tshark_packets({"frame.number": ["43"], "tls.handshake.type": types,
+                    "tls.handshake.version": ["0x0303"],
+                    "tls.handshake.ciphersuite": ["0xc02f"]})
+    with caplog.at_level(logging.WARNING, logger=parser.__name__):
+        [entry] = parser.extract_tls_metadata("server-with-certificate.pcap")
+    assert entry["packet_number"] == 43
+    assert entry["handshake_type"] == "Server Hello"
+    assert entry["tls_version"] == "TLS 1.2"
+    assert entry["selected_cipher"] == "0xc02f" and entry["selected_group"] is None
+    assert not any("ambiguous" in record.getMessage().lower()
+                   for record in caplog.records if record.name == parser.__name__)
 
 
 @pytest.mark.parametrize("field,selected_field", [

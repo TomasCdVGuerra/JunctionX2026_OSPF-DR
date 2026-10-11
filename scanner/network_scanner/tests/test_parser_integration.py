@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import logging
 from pathlib import Path
 import shutil
 import struct
@@ -63,6 +64,59 @@ def test_real_hybrid_key_share_is_selected_by_server_and_only_advertised_by_clie
     assert server["selected_cipher"] == "0x1302"
     assert server["tls_version"] == "TLS 1.3"
     assert (server["source_ip"], server["destination_ip"]) == (client["destination_ip"], client["source_ip"])
+
+
+def test_real_two_server_hellos_in_one_frame_are_rejected(tshark, tmp_path, caplog):
+    """Duplicate one captured ServerHello inside one TLS record/TCP frame."""
+    raw = CAPTURE.read_bytes()
+    assert raw[:4] == b"\xd4\xc3\xb2\xa1"  # The challenge capture is little-endian Ethernet PCAP.
+    offset = 24
+    for _ in range(25):  # Frame 25 contains one complete TLS 1.3 ServerHello.
+        seconds, fractional, captured_length, _ = struct.unpack_from("<IIII", raw, offset)
+        frame = raw[offset + 16:offset + 16 + captured_length]
+        offset += 16 + captured_length
+    assert frame[12:14] == b"\x08\x00" and frame[23] == 6  # IPv4/TCP.
+    ip_offset = 14
+    ip_length = (frame[ip_offset] & 0x0F) * 4
+    tcp_offset = ip_offset + ip_length
+    tcp_length = (frame[tcp_offset + 12] >> 4) * 4
+    payload_offset = tcp_offset + tcp_length
+    record = frame[payload_offset:ip_offset + struct.unpack_from("!H", frame, ip_offset + 2)[0]]
+    assert record[0] == 22 and record[5] == 2  # TLS handshake record, ServerHello message.
+    assert len(record) == 5 + int.from_bytes(record[3:5], "big")
+    assert len(record[5:]) == 4 + int.from_bytes(record[6:9], "big")
+    handshakes = record[5:] * 2
+    payload = record[:3] + struct.pack("!H", len(handshakes)) + handshakes
+    doubled = bytearray(frame[:payload_offset] + payload)
+    struct.pack_into("!H", doubled, ip_offset + 2, len(doubled) - ip_offset)
+
+    def checksum(data):
+        padded = data + bytes(len(data) % 2)
+        total = sum(struct.unpack(f"!{len(padded) // 2}H", padded))
+        while total >> 16:
+            total = (total & 0xFFFF) + (total >> 16)
+        return (~total) & 0xFFFF
+
+    # Length changes require fresh IP and TCP checksums, including the pseudo-header.
+    struct.pack_into("!H", doubled, ip_offset + 10, 0)
+    struct.pack_into("!H", doubled, ip_offset + 10, checksum(bytes(doubled[ip_offset:tcp_offset])))
+    struct.pack_into("!H", doubled, tcp_offset + 16, 0)
+    pseudo_header = bytes(doubled[ip_offset + 12:ip_offset + 20]) + struct.pack("!BBH", 0, 6, len(doubled) - tcp_offset)
+    struct.pack_into("!H", doubled, tcp_offset + 16, checksum(pseudo_header + bytes(doubled[tcp_offset:])))
+    path = tmp_path / "two-server-hellos.pcap"
+    path.write_bytes(classic_header() + struct.pack("<IIII", seconds, fractional, len(doubled), len(doubled)) + doubled)
+
+    # Verify the actual dissector sees two Hello occurrences in a single frame.
+    result = subprocess.run([tshark, "-n", "-2", "-r", str(path), "-T", "json",
+                             "-e", "frame.number", "-e", "tls.handshake.type"],
+                            check=True, capture_output=True, text=True, timeout=30)
+    [packet] = json.loads(result.stdout)
+    layers = packet["_source"]["layers"]
+    assert layers["frame.number"] == ["1"]
+    assert layers["tls.handshake.type"] == ["2", "2"]
+    with caplog.at_level(logging.WARNING, logger=parser.__name__):
+        assert parser.extract_tls_metadata(str(path)) == []
+    assert "Skipping ambiguous TLS Hello frame" in caplog.text
 
 
 def test_real_ssh_identifications_and_kex_lists_do_not_create_cleartext_false_positives(captured):

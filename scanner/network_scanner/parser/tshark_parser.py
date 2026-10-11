@@ -139,13 +139,13 @@ def extract_tls_metadata(pcap_filepath: str) -> list[dict[str, Any]]:
     entries = []
     for packet in packets:
         layers = packet.get("_source", {}).get("layers", {})
-        types = {_number(raw) for raw in _get_field_list(layers, "tls.handshake.type")}
-        hello_types = types.intersection({1, 2})
-        # Flattened fields cannot safely associate a mixed Hello frame.
+        types = [_number(raw) for raw in _get_field_list(layers, "tls.handshake.type")]
+        hello_types = [handshake_type for handshake_type in types if handshake_type in {1, 2}]
+        # Flattened fields cannot associate multiple Hellos, even of one type.
         if len(hello_types) != 1:
             logger.warning("Skipping ambiguous TLS Hello frame %s", layers.get("frame.number"))
             continue
-        handshake_type = hello_types.pop()
+        handshake_type = hello_types[0]
         versions_raw = _get_field_list(layers, "tls.handshake.extensions.supported_version")
         known_versions = [v for v in versions_raw if _number(v) in range(768, 773)]
         supported_versions = (

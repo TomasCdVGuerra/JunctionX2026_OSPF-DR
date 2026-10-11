@@ -38,10 +38,8 @@ Relatórios gerados na raiz do projeto:
 - `htmlcov/parser/index.html`: relatório navegável por ficheiro e linha.
 - `htmlcov/parser/coverage.json`: contagens de linhas e ramificações.
 
-O terminal distingue `PASSED`, `FAILED`, `SKIPPED` e `XFAIL`. Testes de integração
+O terminal distingue `PASSED`, `FAILED` e `SKIPPED`. Testes de integração
 saltados por falta de TShark não representam uma validação da captura real.
-Uma regressão conhecida marcada `xfail(strict=True)` continua a documentar um
-defeito: se passar inesperadamente, o comando falha para exigir a revisão da marca.
 
 ## Casos cobertos
 
@@ -50,6 +48,8 @@ defeito: se passar inesperadamente, o comando falha para exigir a revisão da ma
 - JSON inválido, resposta vazia, estrutura de resposta inválida e avisos do processo.
 - Versões TLS, ClientHello/ServerHello, HelloRetryRequest, grupos e cifras,
   metadados IPv4/IPv6 e campos opcionais ausentes.
+- Rejeição conservadora de vários Hello no mesmo pacote, incluindo repetições
+  do mesmo tipo, com aviso que identifica o pacote ambíguo.
 - Listas SSH em CSV e identificação conservadora de cliente/servidor.
 - Protocolos em texto claro e negativos para portas comuns sem prova de protocolo,
   PostgreSQL SSL/GSSENC e SMTP STARTTLS.
@@ -65,12 +65,14 @@ defeito: se passar inesperadamente, o comando falha para exigir a revisão da ma
 Cobertura de 100% significa que todas as linhas e ramificações medidas foram
 executadas. Não prova que todas as combinações possíveis de tráfego estão corretas.
 
-## Defeitos existentes expostos pelos testes
+## Tratamento de metadados ambíguos
 
-Um caso de extracao esta marcado
-como `xfail(strict=True)` porque demonstram estes comportamentos incorretos:
-
-- Vários ServerHello no mesmo pacote são achatados numa única entrada ambígua.
+Os campos extraídos pelo TShark são achatados por pacote. Quando há vários
+ClientHello ou ServerHello no mesmo pacote, não é possível associar cada cifra,
+grupo ou versão ao Hello correto. O parser preserva a multiplicidade dos tipos
+e ignora esses pacotes, registando um aviso com o número do pacote. Também
+ignora pacotes sem um tipo Hello identificável. Um único Hello acompanhado
+de mensagens de handshake de outros tipos continua a ser aceite.
 
 Pedidos e respostas HTTP descodificados dentro de TLS ja sao excluidos dos
 resultados cleartext. Os testes verificam cada sinal de transporte TLS.
@@ -79,16 +81,6 @@ ClientHello preserva versoes desconhecidas validas em `supported_versions`,
 mantendo a ordem e excluindo GREASE e identificadores invalidos.
 ServerHello preserva a versao selecionada desconhecida; a selecao tem
 prioridade sobre os campos legados.
-
-Para uma auditoria em que estes defeitos também fazem o comando falhar:
-
-```powershell
-.\.venv\Scripts\python.exe -B -m pytest -c scanner/network_scanner/tests/pytest-parser.ini --runxfail
-```
-
-`xfail` não significa aprovação. Esta opção executa as mesmas asserções sem
-aceitar falhas conhecidas. A marca estrita exige revisão se uma futura correção
-fizer um caso passar.
 
 ## Formato de saída partilhado com models.py
 
