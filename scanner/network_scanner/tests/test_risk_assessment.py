@@ -36,9 +36,9 @@ from scanner.network_scanner.analyser import risk_assessment as risk
     ("SHA-512", None, None, F.DIGEST, Q.SAFE, Q.SAFE),
     ("HMAC-SHA-1", None, None, F.MAC, Q.MEDIUM, Q.MEDIUM),
     ("HMAC-MD5", None, None, F.MAC, Q.MEDIUM, Q.MEDIUM),
-    ("HMAC-SHA-256", None, None, F.MAC, Q.SAFE, Q.SAFE),
-    ("HKDF_SHA-384", None, None, F.KDF, Q.SAFE, Q.SAFE),
-    ("TLS-PRF-SHA-256", None, None, F.KDF, Q.SAFE, Q.SAFE),
+    ("HMAC-SHA-256", None, None, F.MAC, Q.UNKNOWN, Q.UNKNOWN),
+    ("HKDF_SHA-384", None, None, F.KDF, Q.UNKNOWN, Q.UNKNOWN),
+    ("TLS-PRF-SHA-256", None, None, F.KDF, Q.UNKNOWN, Q.UNKNOWN),
     ("TLS-PRF-MD5-SHA-1", None, None, F.KDF, Q.MEDIUM, Q.MEDIUM),
     ("ML-KEM-768", None, None, F.KEY_EXCHANGE, Q.SAFE, Q.SAFE),
     ("X25519MLKEM768", None, None, F.KEY_EXCHANGE, Q.SAFE, Q.SAFE),
@@ -65,7 +65,7 @@ def test_local_risk_policy_with_unknown_and_known_parameters(name, bits, mode, f
 
 
 @pytest.mark.parametrize("bits,quantum", [(128, Q.MEDIUM), (192, Q.MEDIUM), (256, Q.SAFE)])
-@pytest.mark.parametrize("mode", [None, "", "   ", "INVALID", "future-mode", "ECB", 123])
+@pytest.mark.parametrize("mode", [None, "", "   ", "INVALID", "future-mode", 123])
 def test_aes_unknown_mode_does_not_claim_classical_safety(bits, quantum, mode):
     """Mantem risco classico desconhecido sem perder a avaliacao quantica do tamanho AES."""
     actual_quantum, classical, reason, recommendation = risk.assess_primitive(

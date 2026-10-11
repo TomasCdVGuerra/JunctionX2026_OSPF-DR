@@ -484,10 +484,10 @@ def test_real_scanner_used_when_scan_method_exists_bundled_data(monkeypatch):
             "operation": "KEYGEN",
         }
     ]
-    mock_scan_dir = MagicMock(return_value=mock_findings)
+    mock_scan_file = MagicMock(return_value=mock_findings)
 
     # Provide real scanner module with scan method
-    monkeypatch.setattr(dashboard.source_scanner, "scan_source_directory", mock_scan_dir, raising=False)
+    monkeypatch.setattr(dashboard.source_scanner, "scan_file", mock_scan_file, raising=False)
 
     # Spy on the fallback function to verify it is NOT used
     mock_fallback = MagicMock(wraps=dashboard._scan_source_file_fallback)
@@ -496,7 +496,7 @@ def test_real_scanner_used_when_scan_method_exists_bundled_data(monkeypatch):
     cbom, _warnings = dashboard.scan_bundled_data()
 
     # The real scanner method MUST be invoked
-    assert mock_scan_dir.called, "Real scanner module scan method was not invoked!"
+    assert mock_scan_file.called, "Real scanner module scan method was not invoked!"
 
     # The fallback MUST NOT be used when real scanner exists with a scan method
     assert not mock_fallback.called, "Fallback heuristic was used even though real scanner module had a scan method!"

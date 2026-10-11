@@ -78,5 +78,11 @@ For detailed architecture diagrams, cryptographic threat models, CBOM schema map
   * **Quantum Risk Score**: `100 × (Critical + 0.3 × Medium) / assessed findings`, shown beside quantum assessment coverage. Unknown findings are excluded from the score; no assessed findings displays N/A. Higher scores mean greater exposure.
   * **Crypto Hygiene**: A classical assessment score from 0 to 100, penalizing unresolved findings for incomplete coverage. It is not a certification or proof of compromise.
   * **Posture Status**: `FAILING` for critical risk on either axis, `AT_RISK` for medium risk, `INCOMPLETE` when assessment remains unknown, `SECURE` when all findings are safe under the evaluated criteria, or `NO_DATA` for an empty inventory. Protocol findings retain the network analyzers' context.
-  * **Dual-Axis Risk Model**: Explicitly tracks **Quantum Risk** (future exposure to Shor/Grover attacks) and **Classical Risk** (current pre-quantum cryptographic strength). For example, RSA-2048 is `Quantum Risk: Critical` (broken by Shor's algorithm) while `Classical Risk: Safe` (not classically broken).
+  * **Dual-Axis Risk Model**: Explicitly tracks **Quantum Risk** (exposure to quantum attacks) and **Classical Risk** (known classical parameters/configuration). RSA-2048 signing keys are quantum-critical while meeting the evaluated classical key-size criterion. Safe does not certify the implementation.
+  * **Input processing coverage**: Complete, Partial or Unknown is displayed independently of finding posture. Failures and limited discovery remain visible even when discovered findings are safe. Input IDs link repeated filenames to findings, CSV and CBOM.
+
+Dependencies are pinned in `requirements.txt` from a validated clean Python 3.13
+environment. GitHub Actions tests Windows and Linux; Linux also requires a real
+TShark check against reviewed packets in the supplied capture. See
+[risk policy](docs/RISK_POLICY.md) for shared criteria and protocol exceptions.
   * **Independent Executive Metrics**: Executive metrics are calculated from the complete active scan inventory, ensuring high-level posture remains accurate while search and filter controls narrow detailed tabular views.

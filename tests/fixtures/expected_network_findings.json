@@ -1,0 +1,639 @@
+{
+  "review_scope": "Packets 23/25 (TLS Client/Server Hello), 10/12 (SSH KEXINIT), and 447 (decoded HTTP GET) from the bundled network.pcap. Metadata was extracted using TShark; expected findings are explicitly reviewed below. Offline analyzer tests do not replace the separate real-extraction check.",
+  "capture_sha256": "28616900793dcb247e54e1a333e11793c860b8ac9bdb4a483059158e9f371392",
+  "cases": [
+    {
+      "kind": "tls_sessions",
+      "reason": "TLS 1.3 offers three suites, two groups and two signature schemes. AES-128 and SHA-256 digest have reduced quantum margin; SHA-2 KDF entropy remains unknown. X25519/secp256r1, RSA and ECDSA are Shor-vulnerable. Packet 25 selects AES-128-GCM and X25519; selection does not prove session completion.",
+      "metadata": [
+        {
+          "packet_number": 23,
+          "stream_id": "1",
+          "timestamp": "1790873303.944491000",
+          "source_ip": "192.0.2.10",
+          "destination_ip": "192.0.2.12",
+          "source_port": "49153",
+          "destination_port": "443",
+          "handshake_type": "Client Hello",
+          "tls_version": "TLS 1.3",
+          "supported_versions": [
+            "TLS 1.3"
+          ],
+          "cipher_suites": [
+            "0x1301",
+            "0x1302",
+            "0x1303"
+          ],
+          "selected_cipher": null,
+          "supported_groups": [
+            "0x001d",
+            "0x0017"
+          ],
+          "key_share_groups": [
+            "29"
+          ],
+          "selected_group": null,
+          "server_name": "app16.lab",
+          "signature_algorithms": [
+            "0x0403",
+            "0x0804"
+          ],
+          "hello_retry_request": false
+        },
+        {
+          "packet_number": 25,
+          "stream_id": "1",
+          "timestamp": "1790873303.964491000",
+          "source_ip": "192.0.2.12",
+          "destination_ip": "192.0.2.10",
+          "source_port": "443",
+          "destination_port": "49153",
+          "handshake_type": "Server Hello",
+          "tls_version": "TLS 1.3",
+          "supported_versions": [
+            "TLS 1.3"
+          ],
+          "cipher_suites": [
+            "0x1301"
+          ],
+          "selected_cipher": "0x1301",
+          "supported_groups": [],
+          "key_share_groups": [
+            "29"
+          ],
+          "selected_group": "29",
+          "server_name": null,
+          "signature_algorithms": [],
+          "hello_retry_request": false
+        }
+      ],
+      "expected": [
+        [
+          23,
+          "TLS 1.3",
+          null,
+          null,
+          "advertised",
+          "unknown",
+          "unknown",
+          "unknown"
+        ],
+        [
+          23,
+          "AES",
+          128,
+          "GCM",
+          "advertised",
+          "encrypt",
+          "medium",
+          "safe"
+        ],
+        [
+          23,
+          "SHA-256",
+          null,
+          null,
+          "advertised",
+          "digest",
+          "medium",
+          "safe"
+        ],
+        [
+          23,
+          "HKDF-SHA-256",
+          null,
+          null,
+          "advertised",
+          "kdf",
+          "unknown",
+          "unknown"
+        ],
+        [
+          23,
+          "AES",
+          256,
+          "GCM",
+          "advertised",
+          "encrypt",
+          "safe",
+          "safe"
+        ],
+        [
+          23,
+          "SHA-384",
+          null,
+          null,
+          "advertised",
+          "digest",
+          "safe",
+          "safe"
+        ],
+        [
+          23,
+          "HKDF-SHA-384",
+          null,
+          null,
+          "advertised",
+          "kdf",
+          "unknown",
+          "unknown"
+        ],
+        [
+          23,
+          "ChaCha20-Poly1305",
+          256,
+          null,
+          "advertised",
+          "encrypt",
+          "safe",
+          "safe"
+        ],
+        [
+          23,
+          "SHA-256",
+          null,
+          null,
+          "advertised",
+          "digest",
+          "medium",
+          "safe"
+        ],
+        [
+          23,
+          "HKDF-SHA-256",
+          null,
+          null,
+          "advertised",
+          "kdf",
+          "unknown",
+          "unknown"
+        ],
+        [
+          23,
+          "ECDHE-X25519",
+          255,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "safe"
+        ],
+        [
+          23,
+          "ECDHE-secp256r1",
+          256,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "safe"
+        ],
+        [
+          23,
+          "ECDSA",
+          null,
+          null,
+          "advertised",
+          "sign",
+          "critical",
+          "unknown"
+        ],
+        [
+          23,
+          "SHA-256",
+          null,
+          null,
+          "advertised",
+          "digest",
+          "medium",
+          "safe"
+        ],
+        [
+          23,
+          "RSA",
+          null,
+          null,
+          "advertised",
+          "sign",
+          "critical",
+          "unknown"
+        ],
+        [
+          23,
+          "SHA-256",
+          null,
+          null,
+          "advertised",
+          "digest",
+          "medium",
+          "safe"
+        ],
+        [
+          25,
+          "TLS 1.3",
+          null,
+          null,
+          "negotiated",
+          "unknown",
+          "unknown",
+          "unknown"
+        ],
+        [
+          25,
+          "AES",
+          128,
+          "GCM",
+          "negotiated",
+          "encrypt",
+          "medium",
+          "safe"
+        ],
+        [
+          25,
+          "SHA-256",
+          null,
+          null,
+          "negotiated",
+          "digest",
+          "medium",
+          "safe"
+        ],
+        [
+          25,
+          "HKDF-SHA-256",
+          null,
+          null,
+          "negotiated",
+          "kdf",
+          "unknown",
+          "unknown"
+        ],
+        [
+          25,
+          "ECDHE-X25519",
+          255,
+          null,
+          "negotiated",
+          "key_exchange",
+          "critical",
+          "safe"
+        ]
+      ]
+    },
+    {
+      "kind": "ssh_sessions",
+      "reason": "Both peers offer group14 (2048 bits), group1 (1024 bits), ssh-rsa, AES-128-CBC, 3DES and HMAC-SHA1. Both directions are distinct observations. Mutual ordering selects group14/AES-CBC/HMAC-SHA1 at packet 10; inferred selection is not completed-session proof. CBC and legacy HMAC require review; 3DES and 1024-bit DH are classically critical.",
+      "metadata": [
+        {
+          "packet_number": 10,
+          "stream_id": "0",
+          "timestamp": "1790873302.984491000",
+          "source_ip": "192.0.2.10",
+          "destination_ip": "192.0.2.11",
+          "source_port": "49152",
+          "destination_port": "22",
+          "is_server": false,
+          "role_source": "standard-port",
+          "protocol_banner": null,
+          "kex_algorithms": [
+            "diffie-hellman-group14-sha1",
+            "diffie-hellman-group1-sha1"
+          ],
+          "server_host_key_algorithms": [
+            "ssh-rsa"
+          ],
+          "encryption_client_to_server": [
+            "aes128-cbc",
+            "3des-cbc"
+          ],
+          "encryption_server_to_client": [
+            "aes128-cbc",
+            "3des-cbc"
+          ],
+          "mac_client_to_server": [
+            "hmac-sha1"
+          ],
+          "mac_server_to_client": [
+            "hmac-sha1"
+          ]
+        },
+        {
+          "packet_number": 12,
+          "stream_id": "0",
+          "timestamp": "1790873303.004491000",
+          "source_ip": "192.0.2.11",
+          "destination_ip": "192.0.2.10",
+          "source_port": "22",
+          "destination_port": "49152",
+          "is_server": true,
+          "role_source": "standard-port",
+          "protocol_banner": null,
+          "kex_algorithms": [
+            "diffie-hellman-group14-sha1",
+            "diffie-hellman-group1-sha1"
+          ],
+          "server_host_key_algorithms": [
+            "ssh-rsa"
+          ],
+          "encryption_client_to_server": [
+            "aes128-cbc",
+            "3des-cbc"
+          ],
+          "encryption_server_to_client": [
+            "aes128-cbc",
+            "3des-cbc"
+          ],
+          "mac_client_to_server": [
+            "hmac-sha1"
+          ],
+          "mac_server_to_client": [
+            "hmac-sha1"
+          ]
+        }
+      ],
+      "expected": [
+        [
+          10,
+          "DHE",
+          2048,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "safe"
+        ],
+        [
+          10,
+          "DHE",
+          1024,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "critical"
+        ],
+        [
+          10,
+          "RSA",
+          null,
+          null,
+          "advertised",
+          "sign",
+          "critical",
+          "unknown"
+        ],
+        [
+          10,
+          "AES",
+          128,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "3DES",
+          168,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "critical",
+          "critical"
+        ],
+        [
+          10,
+          "AES",
+          128,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "3DES",
+          168,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "critical",
+          "critical"
+        ],
+        [
+          10,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "advertised",
+          "mac",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "advertised",
+          "mac",
+          "medium",
+          "medium"
+        ],
+        [
+          12,
+          "DHE",
+          2048,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "safe"
+        ],
+        [
+          12,
+          "DHE",
+          1024,
+          null,
+          "advertised",
+          "key_exchange",
+          "critical",
+          "critical"
+        ],
+        [
+          12,
+          "RSA",
+          null,
+          null,
+          "advertised",
+          "sign",
+          "critical",
+          "unknown"
+        ],
+        [
+          12,
+          "AES",
+          128,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          12,
+          "3DES",
+          168,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "critical",
+          "critical"
+        ],
+        [
+          12,
+          "AES",
+          128,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          12,
+          "3DES",
+          168,
+          "CBC",
+          "advertised",
+          "encrypt",
+          "critical",
+          "critical"
+        ],
+        [
+          12,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "advertised",
+          "mac",
+          "medium",
+          "medium"
+        ],
+        [
+          12,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "advertised",
+          "mac",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "DHE",
+          2048,
+          null,
+          "negotiated",
+          "key_exchange",
+          "critical",
+          "safe"
+        ],
+        [
+          10,
+          "RSA",
+          null,
+          null,
+          "negotiated",
+          "sign",
+          "critical",
+          "unknown"
+        ],
+        [
+          10,
+          "AES",
+          128,
+          "CBC",
+          "negotiated",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "AES",
+          128,
+          "CBC",
+          "negotiated",
+          "encrypt",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "negotiated",
+          "mac",
+          "medium",
+          "medium"
+        ],
+        [
+          10,
+          "HMAC-SHA-1",
+          null,
+          null,
+          "negotiated",
+          "mac",
+          "medium",
+          "medium"
+        ]
+      ]
+    },
+    {
+      "kind": "cleartext_traffic",
+      "reason": "Packet 447 contains a decoded HTTP GET, not merely a connection to port 80. Plaintext is classically critical and has no assessed quantum primitive.",
+      "metadata": [
+        {
+          "packet_number": 447,
+          "stream_id": "29",
+          "timestamp": "1790873331.944491000",
+          "source_ip": "192.0.2.10",
+          "destination_ip": "192.0.2.40",
+          "source_port": "49181",
+          "destination_port": "80",
+          "protocol": "HTTP",
+          "http_method": "GET",
+          "http_host": "intranet03.lab",
+          "matched_snippet": "HTTP GET"
+        }
+      ],
+      "expected": [
+        [
+          447,
+          "Cleartext",
+          null,
+          null,
+          "observed",
+          "unknown",
+          "unknown",
+          "critical"
+        ]
+      ]
+    }
+  ],
+  "columns": [
+    "packet_number",
+    "algorithm",
+    "key_size",
+    "mode",
+    "observation",
+    "function",
+    "quantum_risk",
+    "classical_risk"
+  ]
+}
