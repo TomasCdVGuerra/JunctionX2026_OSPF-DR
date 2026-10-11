@@ -80,6 +80,42 @@ OID_MAP: dict[str, str] = {
     "PBKDF2": "1.2.840.113549.1.5.12",
 }
 
+# Specific aliases for canonical OID resolution
+OID_ALIASES: dict[str, str] = {
+    # Key-size parameterized RSA resolves to standard rsaEncryption OID
+    "RSA-1024": "1.2.840.113549.1.1.1",
+    "RSA-2048": "1.2.840.113549.1.1.1",
+    "RSA-3072": "1.2.840.113549.1.1.1",
+    "RSA-4096": "1.2.840.113549.1.1.1",
+
+    # Common spelling/formatting variants
+    "SHA1": "1.3.14.3.2.26",
+    "SHA224": "2.16.840.1.101.3.4.2.4",
+    "SHA256": "2.16.840.1.101.3.4.2.1",
+    "SHA384": "2.16.840.1.101.3.4.2.2",
+    "SHA512": "2.16.840.1.101.3.4.2.3",
+    "SHA3256": "2.16.840.1.101.3.4.2.8",
+    "SHA3384": "2.16.840.1.101.3.4.2.9",
+    "SHA3512": "2.16.840.1.101.3.4.2.10",
+
+    "HMAC-SHA-256": "1.2.840.113549.2.9",
+    "HMAC-SHA-384": "1.2.840.113549.2.10",
+    "HMAC-SHA-512": "1.2.840.113549.2.11",
+    "PBKDF2-HMAC-SHA256": "1.2.840.113549.1.5.12",
+
+    # PQC variant spellings
+    "KYBER512": "2.16.840.1.101.3.4.4.1",
+    "KYBER768": "2.16.840.1.101.3.4.4.2",
+    "KYBER1024": "2.16.840.1.101.3.4.4.3",
+    "MLKEM512": "2.16.840.1.101.3.4.4.1",
+    "MLKEM768": "2.16.840.1.101.3.4.4.2",
+    "MLKEM1024": "2.16.840.1.101.3.4.4.3",
+    "MLDSA44": "2.16.840.1.101.3.4.3.17",
+    "MLDSA65": "2.16.840.1.101.3.4.3.18",
+    "MLDSA87": "2.16.840.1.101.3.4.3.19",
+    "SLHDSA": "2.16.840.1.101.3.4.3.22",
+}
+
 
 def normalise(raw_name: str) -> str:
     """Standardize cryptographic algorithm name into canonical presentation form."""
@@ -198,7 +234,12 @@ def normalise(raw_name: str) -> str:
 
 
 def oid_for(algorithm_name: str) -> str:
-    """Return standard dotted-decimal OID string or 'unknown'."""
+    """Return standard dotted-decimal OID string or 'unknown'.
+
+    Resolves exact canonical names or explicit aliases.
+    Generic names without specific parameters (e.g. 'AES', 'SHA') return 'unknown'
+    to avoid inventing metadata for unresolved algorithms.
+    """
     if not algorithm_name or not algorithm_name.strip():
         return "unknown"
 
@@ -207,15 +248,21 @@ def oid_for(algorithm_name: str) -> str:
     if norm in OID_MAP:
         return OID_MAP[norm]
 
-    # Partial or normalized key matching
-    canonical = normalise(algorithm_name).upper().replace(" ", "-")
+    if norm in OID_ALIASES:
+        return OID_ALIASES[norm]
+
+    # Check normalized canonical form
+    canonical = normalise(algorithm_name).upper().replace("_", "-").replace(" ", "-")
     if canonical in OID_MAP:
         return OID_MAP[canonical]
 
-    # Match primary algorithm prefix/token
-    for key, oid in OID_MAP.items():
-        if key in norm or norm in key:
-            return oid
+    if canonical in OID_ALIASES:
+        return OID_ALIASES[canonical]
+
+    # Normalized compact form without hyphens
+    compact = norm.replace("-", "")
+    if compact in OID_ALIASES:
+        return OID_ALIASES[compact]
 
     return "unknown"
 

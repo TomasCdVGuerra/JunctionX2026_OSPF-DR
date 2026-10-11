@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -28,10 +29,6 @@ try:
 except ImportError:  # pragma: no cover
     CBOMSerializer = None  # type: ignore[assignment,misc]
 
-try:
-    from scanner import cli as scanner_cli
-except ImportError:  # pragma: no cover
-    scanner_cli = None  # type: ignore[assignment]
 
 try:
     from scanner import source_scanner
@@ -592,17 +589,18 @@ def _safe_text_columns(dataframe):
 
 
 def render_cli_fallback_notice() -> None:
-    """Display CLI instructions when the dashboard cannot run normally."""
+    """Display instructions when the dashboard cannot run normally."""
     if st is None:
         print(
-            "Streamlit is not installed. Run the scanner from a terminal "
-            "with: python main.py --all"
+            "Streamlit is required to run the QuantumTrace dashboard. "
+            "Install dependencies and launch with: streamlit run dashboard.py",
+            file=sys.stderr,
         )
         return
 
     st.info(
-        "For headless environments, use the terminal report instead: "
-        "`python main.py --all --output cbom.json`."
+        "The Streamlit dashboard is the primary supported interface for QuantumTrace. "
+        "The CLI entrypoint is temporarily disabled."
     )
 
 
@@ -745,9 +743,6 @@ def _render_download_button(cbom: dict[str, Any]) -> None:
 
 def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
     """Serialize findings into a CycloneDX 1.6 CBOM document."""
-    if scanner_cli and hasattr(scanner_cli, "build_cbom"):
-        return scanner_cli.build_cbom(findings)
-
     if CBOMSerializer is not None:
         serializer = CBOMSerializer(
             scanner_name="OSPF-DR QuantumTrace",

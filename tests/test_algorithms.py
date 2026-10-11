@@ -228,6 +228,21 @@ def test_24_unknown_mode_is_unknown():
     _assert_single_sentence(reasoning)
 
 
+def test_24b_unspecified_aes_mode_is_unknown():
+    """Verify AES without mode evaluates to UNKNOWN because security depends strictly on mode."""
+    risk, cl_bits, q_bits, reasoning = evaluate_risk("AES-128")
+    assert risk == QuantumRiskLevel.UNKNOWN
+    assert cl_bits is None
+    assert q_bits is None
+    _assert_single_sentence(reasoning)
+
+    risk256, cl_bits256, q_bits256, reasoning256 = evaluate_risk("AES-256")
+    assert risk256 == QuantumRiskLevel.UNKNOWN
+    assert cl_bits256 is None
+    assert q_bits256 is None
+    _assert_single_sentence(reasoning256)
+
+
 def test_25_all_results_have_single_sentence_reasoning():
     test_cases = [
         "RSA-3072",
@@ -291,11 +306,16 @@ def test_algorithm_normalization_variations():
 
 def test_oid_mappings():
     assert oid_for("RSA") == "1.2.840.113549.1.1.1"
+    assert oid_for("RSA-2048") == "1.2.840.113549.1.1.1"
     assert oid_for("SHA-256") == "2.16.840.1.101.3.4.2.1"
     assert oid_for("Ed25519") == "1.3.101.112"
     assert oid_for("AES-256-GCM") == "2.16.840.1.101.3.4.1.46"
     assert oid_for("ML-KEM-768") == "2.16.840.1.101.3.4.4.2"
     assert oid_for("NonExistentCipher") == "unknown"
+    # Generic algorithm names without parameters must not receive arbitrary specific OIDs
+    assert oid_for("AES") == "unknown"
+    assert oid_for("AES-128") == "unknown"
+    assert oid_for("SHA") == "unknown"
 
 
 def test_primitive_taxonomies():

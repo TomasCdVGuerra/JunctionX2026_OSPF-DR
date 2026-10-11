@@ -33,7 +33,7 @@ python -m pytest tests -v
 ```
 All unit tests, contract tests, and CycloneDX 1.6 offline schema validations run without external network access.
 
-*(Note: The command-line script `main.py` and `run.sh` are currently placeholder scaffolding in this branch; the primary functional interface is the interactive Streamlit dashboard).*
+*(Note: The command-line interface (`main.py`) is temporarily disabled while cloud and network scan pipelines are unified; the primary supported interface is the interactive Streamlit dashboard).*
 
 ---
 

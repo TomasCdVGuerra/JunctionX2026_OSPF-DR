@@ -1,4 +1,10 @@
-"""Command-line interface and multi-source scan pipeline orchestrator."""
+"""Command-line interface and multi-source scan pipeline orchestrator.
+
+NOTE: The CLI is temporarily disabled as a user-facing interface for the
+current JunctionX Lisbon challenge deliverable. The primary supported interface
+is the Streamlit dashboard (`dashboard.py`). This module is preserved as dormant
+code for future reactivation once multi-vector pipeline arguments are completed.
+"""
 
 from __future__ import annotations
 

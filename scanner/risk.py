@@ -545,6 +545,16 @@ def evaluate_risk(
                 "The AES key size or mode could not be proven statically, so the finding requires manual review.",
             )
 
+        # AES mode must be proven statically; without mode information,
+        # the scanner cannot distinguish secure modes (e.g. GCM) from insecure modes (e.g. ECB).
+        if mode_clean is None:
+            return (
+                QuantumRiskLevel.UNKNOWN,
+                None,
+                None,
+                "The AES mode or key size could not be proven statically, so the finding requires manual review.",
+            )
+
         if num_key == 256:
             mode_desc = f"-{mode_clean}" if mode_clean and mode_clean != "256" else ""
             return (
