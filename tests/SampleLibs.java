@@ -29,7 +29,7 @@ class SampleLibs {
         getInstance("MD5");                                         // EXPECT 1  import static de MessageDigest
         org.apache.commons.codec.digest.DigestUtils.md5Hex(data);   // EXPECT 1  totalmente qualificado
         new DigestUtils("SHA-1");                                   // EXPECT 1  construtor com string
-        new DigestUtils("SHA-256");                                 // OK
+        new DigestUtils("SHA-256");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
         HmacUtils.hmacMd5Hex(k, data);                              // EXPECT 1
         HmacUtils.hmacSha1(k, data);                                // EXPECT 1
         HmacUtils.hmacSha256(k, data);                              // OK

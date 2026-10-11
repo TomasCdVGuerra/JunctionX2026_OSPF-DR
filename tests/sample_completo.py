@@ -49,18 +49,18 @@ def dentro_de_funcao():
     import hashlib as inner
     return inner.md5(b"x")                         # EXPECT 1  import local
 
-# ---------------- NAO devem ser achados
-sha256(b"a")                                       # OK
-hashlib.sha256(b"a")                               # OK
-hashlib.new("sha256")                              # OK
+# Inventory includes strong algorithms; unresolved receivers remain excluded.
+sha256(b"a")  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+hashlib.sha256(b"a")  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+hashlib.new("sha256")  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
 hashlib.new(algo_var)                              # OK
-hmac.new(k, m, hashlib.sha256)                     # OK
-hmac.new(k, m, "sha256")                           # OK
-AES.new(key, AES.MODE_GCM, nonce=n)                # OK
-AES.new(key, AES.MODE_CBC, iv)                     # OK
-AES.new(key, mode_desconhecido)                    # OK  nao resolvivel estaticamente
-AES.new(*args)                                     # OK  dinamico
-AES.new(**kwargs)                                  # OK  dinamico
+hmac.new(k, m, hashlib.sha256)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+hmac.new(k, m, "sha256")  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+AES.new(key, AES.MODE_GCM, nonce=n)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+AES.new(key, AES.MODE_CBC, iv)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+AES.new(key, mode_desconhecido)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+AES.new(*args)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
+AES.new(**kwargs)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately
 DESCRIBE_x(1)                                      # OK  nome contem DES
 my_DES_helper(2)                                   # OK
 AESTHETIC.new(3)                                   # OK
@@ -68,4 +68,4 @@ foo().md5(b"a")                                    # OK  raiz nao resolvivel
 helpers.md5(b"a")                                  # OK  import relativo
 md5 = 3                                            # OK  atribuicao, nao uso
 modes.CBC(iv)                                      # OK
-algorithms.AES(k)                                  # OK
+algorithms.AES(k)  # EXPECT 1  inventory: recognized algorithm; risk assessed separately

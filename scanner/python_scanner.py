@@ -110,7 +110,7 @@ class cryptoVisitor(ast.NodeVisitor):
                 return node.id
             elif isinstance(node, ast.Attribute):
                 value = self._get_func_name(node.value)
-                return f"{value}.{node.attr}" if value else node.attr
+                return f"{value}.{node.attr}" if value else ""
             return ""
 #--------------------------------------------------- classe nome nó resolve alias e imports para achar o nome completo
     def _candidates(self, node) -> list[str]:

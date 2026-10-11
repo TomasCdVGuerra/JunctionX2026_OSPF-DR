@@ -1,34 +1,21 @@
-import re
-import sys
+"""Reviewed JDK and library inventory; no Java runtime is required."""
 from collections import Counter
 from pathlib import Path
+import re
 
-AQUI = Path(__file__).resolve().parent
-ROOT = AQUI.parent
-sys.path.insert(0, str(AQUI))
-sys.path.insert(0, str(ROOT / "scanner"))
-from java_scanner import scan_file
+import pytest
 
-falhou = False
-for nome in ("SampleJdk.java", "SampleLibs.java"):
-    amostra = AQUI / nome
-    esperado = Counter()
-    for i, linha in enumerate(amostra.read_text(encoding="utf-8").split("\n"), 1):
-        m = re.search(r"// EXPECT (\d+)", linha)
-        if m:
-            esperado[i] = int(m.group(1))
+from scanner.java_scanner import scan_file
 
-    achado = Counter(f.line for f in scan_file(str(amostra)))
-    faltando = {l: (esperado[l], achado.get(l, 0)) for l in esperado if achado.get(l, 0) != esperado[l]}
-    sobrando = {l: c for l, c in achado.items() if l not in esperado}
 
-    print(f"[{nome}] Esperados: {sum(esperado.values())} | Achados: {sum(achado.values())}")
-    print("   Divergências (linha: esperado, achado):", faltando or "nenhuma")
-    print("   Falsos positivos (linha: quantidade):  ", sobrando or "nenhum")
-    if faltando or sobrando:
-        falhou = True
-
-if falhou:
-    print("\nRESULTADO: FALHOU")
-    sys.exit(1)
-print("\nRESULTADO: OK")
+@pytest.mark.parametrize("filename", ["SampleJdk.java", "SampleLibs.java"])
+def test_java_sample_inventory(filename):
+    sample = Path(__file__).with_name(filename)
+    expected = Counter()
+    for number, line in enumerate(sample.read_text(encoding="utf-8").splitlines(), 1):
+        match = re.search(r"// EXPECT (\d+)", line)
+        if match:
+            expected[number] = int(match[1])
+    assert expected, "Sample must declare reviewed expectations"
+    findings = scan_file(str(sample), strict=True)
+    assert Counter(f.line for f in findings) == expected

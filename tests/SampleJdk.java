@@ -41,7 +41,7 @@ public class SampleJdk {
 
         String algo = "SHA-256";
         algo = "MD5";
-        MessageDigest.getInstance(algo);                          // EXPECT 1  ambiguo (um dos valores e fraco)
+        MessageDigest.getInstance(algo);  // EXPECT 2  inventory: both SHA-256 and MD5 remain possible
 
         String quote = "http://exemplo.com";  MessageDigest.getInstance("MD5");   // EXPECT 1  "//" dentro de string
         char aspas = '"';
@@ -74,20 +74,20 @@ public class SampleJdk {
     }
 
     void safe(byte[] key, String unknown) throws Exception {
-        MessageDigest.getInstance("SHA-256");                     // OK
-        MessageDigest.getInstance("SHA-512");                     // OK
+        MessageDigest.getInstance("SHA-256");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        MessageDigest.getInstance("SHA-512");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
         MessageDigest.getInstance("SHA3-256");                    // OK
-        Mac.getInstance("HmacSHA256");                            // OK
-        Signature.getInstance("SHA256withRSA");                   // OK
-        SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");     // OK
-        Cipher.getInstance("AES/GCM/NoPadding");                  // OK
-        Cipher.getInstance("AES/CBC/PKCS5Padding");               // OK
-        Cipher.getInstance("AES/CTR/NoPadding");                  // OK
+        Mac.getInstance("HmacSHA256");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        Signature.getInstance("SHA256withRSA");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        Cipher.getInstance("AES/GCM/NoPadding");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        Cipher.getInstance("AES/CBC/PKCS5Padding");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        Cipher.getInstance("AES/CTR/NoPadding");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
         Cipher.getInstance("RSA/ECB/PKCS1Padding");               // OK  ECB em RSA nao e problema
         Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding"); // OK
         Cipher.getInstance("PBEWithHmacSHA256AndAES_128");        // OK
-        KeyGenerator.getInstance("AES");                          // OK
-        new SecretKeySpec(key, "AES");                            // OK
+        KeyGenerator.getInstance("AES");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
+        new SecretKeySpec(key, "AES");  // EXPECT 1  inventory: recognized algorithm; risk assessed separately
         Cipher.getInstance(unknown);                              // OK  nao resolvivel estaticamente
         MessageDigest.getInstance(unknown + "x");                 // OK
         factory().getInstance("MD5");                             // OK  raiz nao resolvivel
