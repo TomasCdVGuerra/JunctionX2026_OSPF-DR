@@ -1,24 +1,36 @@
-# Purpose:
-# Analyzes network PCAP packet captures for in-transit cryptographic protocols, TLS versions, negotiated cipher suites, and cleartext traffic.
-#
-# Responsibilities:
-# - Parse standard PCAP files without requiring mandatory external C binary libraries.
-# - Dissect TLS Handshake records (ClientHello, ServerHello) to extract negotiated cipher suites and TLS protocol versions (TLS 1.2, TLS 1.3).
-# - Identify SSH transport handshakes and application layer protocols.
-# - Detect unencrypted cleartext protocols on common ports (HTTP on 80, Postgres on 5432) and flag lack of encryption.
-# - Associate detected cipher suites with standard IANA identifiers, cryptographic strengths, and post-quantum risks.
-#
-# Planned interface:
-# - parse_pcap(filepath: Path) -> list[CryptoFinding]: extracts network cryptographic assets and observed cipher suites.
-# - extract_tls_handshake(payload: bytes) -> tuple[str, str]: returns (tls_version, cipher_suite) or ("unknown", "unknown").
-# - identify_cleartext_traffic(packet: bytes) -> Optional[CryptoFinding]: flags unencrypted protocols.
-#
-# Rules and edge cases:
-# - Handle both little-endian and big-endian PCAP capture formats cleanly.
-# - Packet truncation and corrupted frames must be handled gracefully without crashing the analyzer.
-# - In ServerHello handshakes, cipher suite ID occurs after the session ID field; handle variable session ID lengths dynamically.
-# - Cleartext protocols (HTTP, unencrypted database) must be flagged with explicit warnings in evidence.
-#
-# Scoring link:
-# - Coverage (25%): Extends audit capabilities to live network traffic captures covering active cipher suite negotiation.
-# - Accuracy (40%): Distinguishes legacy TLS 1.0/1.1 and deprecated cipher suites (e.g. 3DES, static RSA key exchange) from modern TLS 1.3.
+"""Public network entrypoint, preserving protocol-specific assessments."""
+from pathlib import Path
+
+from scanner.models import CryptoFinding, Evidence
+from scanner.network_scanner import pcap_scanner as network_scanner
+from scanner.nist_references import nist_references_for_algorithm
+
+
+NETWORK_ASSESSMENT_RULE_ID = "NETWORK-RISK-ASSESSMENT"
+
+
+def scan(path: Path) -> list[CryptoFinding]:
+    """Extract a capture once and annotate assessed results with references.
+
+    TShark errors propagate to the dashboard instead of silently using a
+    heuristic. Existing protocol assessments and packet evidence are preserved.
+    """
+    results = []
+    for original in network_scanner.scan(Path(path)):
+        finding = original.model_copy(deep=True)
+        anchor = finding.evidence[0]
+        references = nist_references_for_algorithm(
+            finding.algorithm_name, finding.crypto_function, finding.mode,
+        )
+        finding.evidence.append(Evidence(
+            file_path=anchor.file_path, packet_number=anchor.packet_number,
+            rule_id=NETWORK_ASSESSMENT_RULE_ID,
+            nist_standard="; ".join(references) or None,
+            risk_reasoning=(
+                f"Network assessment: quantum={finding.quantum_risk.value}; "
+                f"classical={finding.classical_risk.value}. "
+                + (anchor.risk_reasoning or "Protocol analysis; see packet evidence.")
+            ),
+        ))
+        results.append(finding)
+    return results

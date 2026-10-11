@@ -289,7 +289,7 @@ def test_integration_dashboard_and_report_counts_agree():
     df = dashboard.load_findings_dataframe(cbom)
 
     dashboard_counts = (
-        df["Risk Rating"]
+        df["Quantum Risk"]
         .value_counts()
         .reindex(["Critical", "Medium", "Safe", "Unknown"], fill_value=0)
         .to_dict()

@@ -6,9 +6,9 @@
     - (Git Bash): source .venv/Scripts/activate
     - Linux / macOS: source .venv/bin/activate
 
-3. Instalar as bibliotecas pretendidas (com pip install ou python -m pip install)
+3. Instalar as dependências partilhadas: python -m pip install -r requirements.txt
 
-4. python -m pip freeze > requirements.txt (voltar a fazer isto sempre que instalar ou atualizar bibliotecas)
+4. Ao acrescentar uma dependência, editar requirements.txt conscientemente e comunicar a alteração à equipa. Não substituir o ficheiro com pip freeze do ambiente pessoal. Todos devem usar Python 3.13; os intervalos de versões atuais não constituem um lockfile.
 
 ## Comandos para iniciar o Python Environment (em sessões futuras):
 1. Ativar o ambiente (conforme o OS indicado acima).
@@ -16,3 +16,9 @@
 
 # Correr testes iniciais:
 - python.exe -m pytest tests/test_phase0_contract.py -q
+
+# Validação completa e demo:
+- python -m pytest -q (inclui os testes em scanner/network_scanner/tests)
+- python -m streamlit run dashboard.py
+- O TShark é um executável externo; instalar Wireshark/TShark para análises reais de PCAP.
+- Consultar [DEMO.md](DEMO.md) para os inputs e resultados esperados.

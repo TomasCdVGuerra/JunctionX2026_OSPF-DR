@@ -46,3 +46,20 @@ def test_aggregate_original_and_engine_references_without_duplicates():
         {"nist_standard": "FIPS 197"}, {"nist_standard": "none"},
         {"nist_standard": "FIPS 197; SP 800-38D"},
     ]) == "FIPS 197; SP 800-38D"
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("ECDHE-secp256r1", ["SP 800-56A Rev. 3", "SP 800-186"]),
+    ("DHE-ffdhe2048", ["SP 800-56A Rev. 3"]),
+    ("DHE", ["SP 800-56A Rev. 3"]),
+    ("HKDF-SHA-256", ["SP 800-56C Rev. 2", "FIPS 180-4"]),
+    ("TLS-PRF-SHA-384", ["SP 800-135 Rev. 1", "SP 800-52 Rev. 2", "FIPS 180-4"]),
+    ("X25519MLKEM768", ["FIPS 203 (ML-KEM component)"]),
+    ("3DES", ["SP 800-131A Rev. 2"]),
+    ("ECDHE-unrecognised", []),
+    ("HKDF-MadeUp", []),
+    ("X25519Kyber768Draft00", []),
+    ("ECDHE-X25519", []),
+])
+def test_network_names_have_scoped_references(name, expected):
+    assert nist_references_for_algorithm(name) == expected

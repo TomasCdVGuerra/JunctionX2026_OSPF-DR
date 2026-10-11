@@ -223,7 +223,7 @@ def test_component_to_row():
     }
     row = _component_to_row(comp)
     assert row["Algorithm"] == "RSA-2048"
-    assert row["Risk Rating"] == "Critical"
+    assert row["Quantum Risk"] == "Critical"
     assert row["Quantum Vulnerable"] == "true"
     assert row["Quantum Safe"] == "false"
     assert row["Source Type"] == "cloud-posture"
@@ -237,7 +237,7 @@ def test_load_findings_dataframe_empty():
     df = load_findings_dataframe({"components": []})
     assert len(df) == 0
     assert "Algorithm" in df.columns
-    assert "Risk Rating" in df.columns
+    assert "Quantum Risk" in df.columns
     assert "Source Path" in df.columns
 
 
@@ -265,7 +265,7 @@ def test_load_findings_dataframe_from_fixture():
     df = load_findings_dataframe(sample_cbom)
     assert len(df) == 2
     assert list(df["Algorithm"]) == ["AES-256-GCM", "RSA-2048"]
-    assert list(df["Risk Rating"]) == ["Safe", "Critical"]
+    assert list(df["Quantum Risk"]) == ["Safe", "Critical"]
 
 
 def test_safe_text_columns():
@@ -469,7 +469,7 @@ def test_pydantic_crypto_finding_integration_with_cbom_and_dashboard():
     df = load_findings_dataframe(cbom)
     assert len(df) == 1
     assert df.iloc[0]["Algorithm"] == "RSA-2048"
-    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Quantum Risk"] == "Critical"
     assert df.iloc[0]["Source Type"] == "cloud-posture"
 
 
@@ -617,7 +617,7 @@ def test_scanner_choice_logging(caplog):
 def test_load_findings_dataframe_malformed_components_resilience():
     """Petty: Verify load_findings_dataframe never crashes on invalid CBOM structures and preserves schema."""
     expected_cols = [
-        "Algorithm", "Risk Rating", "Scanner source", "Source Type", "Source Path",
+        "Algorithm", "Quantum Risk", "Scanner source", "Source Type", "Source Path",
         "Operation", "Quantum Vulnerable", "Quantum Safe", "Line Number",
         "Matched Snippet", "Rule ID", "NIST References", "BOM Reference", "Description",
     ]
@@ -658,7 +658,7 @@ def test_load_findings_dataframe_direct_crypto_finding_list():
     df = load_findings_dataframe([f])
     assert len(df) == 1
     assert df.iloc[0]["Algorithm"] == "Ed25519"
-    assert df.iloc[0]["Risk Rating"] == "Critical"
+    assert df.iloc[0]["Quantum Risk"] == "Critical"
     assert df.iloc[0]["Source Path"] == "auth/token.go"
     assert df.iloc[0]["Line Number"] == "77"
     assert df.iloc[0]["Rule ID"] == "GO-ED25519"
@@ -949,7 +949,7 @@ def test_metrics_remain_independent_of_filters():
     with patch("dashboard.st") as mock_st, patch("dashboard._render_metrics", side_effect=mock_render_metrics):
         mock_st.file_uploader.return_value = None
         # Simulate filter: user selects ONLY "Safe", which filters out RSA-2048
-        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if "Risk tier" in label else default
+        mock_st.multiselect.side_effect = lambda label, options, default: ["Safe"] if label == "Quantum risk" else default
         mock_st.text_input.return_value = ""
         mock_st.button.return_value = False
         mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
@@ -992,18 +992,18 @@ def test_dual_axis_and_reasoning_in_dataframe():
     }
 
     df = load_findings_dataframe(sample_cbom)
-    assert "Risk Rating" in df.columns
+    assert "Quantum Risk" in df.columns
     assert "Classical Risk" in df.columns
     assert "NIST References" in df.columns
     assert "Description" in df.columns
 
     rsa_row = df[df["Algorithm"] == "RSA-2048"].iloc[0]
-    assert rsa_row["Risk Rating"] == "Critical"
+    assert rsa_row["Quantum Risk"] == "Critical"
     assert rsa_row["Classical Risk"] == "Safe"
     assert "Shor" in str(rsa_row["Description"])
 
     md5_row = df[df["Algorithm"] == "MD5"].iloc[0]
-    assert md5_row["Risk Rating"] == "Critical"
+    assert md5_row["Quantum Risk"] == "Critical"
     assert md5_row["Classical Risk"] == "Critical"
 
 
@@ -1023,7 +1023,7 @@ def test_unknown_findings_visible_and_counted():
 
     df = load_findings_dataframe(sample_cbom)
     assert len(df) == 1
-    assert df.iloc[0]["Risk Rating"] == "Unknown"
+    assert df.iloc[0]["Quantum Risk"] == "Unknown"
 
     report_findings = dashboard._report_findings_from_cbom(sample_cbom)
     from scanner.report import build_report_summary

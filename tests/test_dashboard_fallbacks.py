@@ -28,7 +28,7 @@ def test_source_fallback_uses_central_assessment(tmp_path, source, name, size, q
     before = original.model_dump()
     row = dashboard.load_findings_dataframe(dashboard._build_cbom_from_findings(findings)).iloc[0]
     assert original.model_dump() == before
-    assert row["Risk Rating"] == quantum
+    assert row["Quantum Risk"] == quantum
     assert row["Classical Risk"] == classical
     assert row["Scanner source"] == "FALLBACK heuristic"
     assert row["Recommendation"] != "unknown"
@@ -48,7 +48,7 @@ def test_cloud_fallback_missing_metadata_and_unknown_policy(tmp_path):
     assert all(f.key_size is None and f.mode is None for f in findings)
     assert all(f.evidence[0].json_path and f.evidence[0].line_number is None for f in findings)
     rows = dashboard.load_findings_dataframe(dashboard._build_cbom_from_findings(findings))
-    assert (rows["Risk Rating"] == "Unknown").all()
+    assert (rows["Quantum Risk"] == "Unknown").all()
     assert (rows["Classical Risk"] == "Unknown").all()
 
 
@@ -60,7 +60,7 @@ def test_pcap_marker_does_not_invent_negotiation(tmp_path):
     assert finding.observation == "observed"
     assert finding.evidence[0].packet_number is None
     row = dashboard.load_findings_dataframe(dashboard._build_cbom_from_findings([finding])).iloc[0]
-    assert row["Risk Rating"] == row["Classical Risk"] == "Unknown"
+    assert row["Quantum Risk"] == row["Classical Risk"] == "Unknown"
     assert row["Packet Number"] == "N/A"
 
 

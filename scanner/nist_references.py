@@ -22,6 +22,22 @@ def nist_references_for_algorithm(
     if pqc is not None:
         return [pqc.standard]
 
+    # Exact network names only. A component reference does not standardize
+    # the whole hybrid or establish conformance of a captured implementation.
+    if algorithm_name in {"X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024", "MLKEM768X25519"}:
+        return ["FIPS 203 (ML-KEM component)"]
+    if algorithm_name in {"ECDHE-secp256r1", "ECDHE-secp384r1", "ECDHE-secp521r1"}:
+        return ["SP 800-56A Rev. 3", "SP 800-186"]
+    if algorithm_name in {"DHE", "DHE-ffdhe2048", "DHE-ffdhe3072", "DHE-ffdhe4096", "DHE-ffdhe6144", "DHE-ffdhe8192"}:
+        return ["SP 800-56A Rev. 3"]
+    if algorithm_name in {"HKDF-SHA-256", "HKDF-SHA-384", "HKDF-SHA-512"}:
+        return ["SP 800-56C Rev. 2", "FIPS 180-4"]
+    if algorithm_name in {"TLS-PRF-SHA-256", "TLS-PRF-SHA-384", "TLS-PRF-MD5-SHA-1"}:
+        return ["SP 800-135 Rev. 1", "SP 800-52 Rev. 2", "FIPS 180-4"]
+    if normalise(algorithm_name) == "3DES":
+        # Transition/deprecation guidance, not an approval for new protection.
+        return ["SP 800-131A Rev. 2"]
+
     suite = parse_tls13_cipher_suite(algorithm_name) or parse_legacy_cipher_suite(algorithm_name)
     if suite is not None:
         refs = ["SP 800-52 Rev. 2"]

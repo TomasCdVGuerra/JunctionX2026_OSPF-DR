@@ -429,7 +429,7 @@ def _component_to_row(component: dict[str, Any]) -> dict[str, str]:
 
     row = {
         "Algorithm": _normalise(component.get("name")),
-        "Risk Rating": risk_rating,
+        "Quantum Risk": risk_rating,
         "Classical Risk": properties.get("cryptotrace:classical_risk", properties.get("cryptotrace:classicalRisk", "unknown")).capitalize(),
         "Recommendation": property_value("cryptotrace:recommendation"),
         "Observation": property_value("cryptotrace:observation"),
@@ -548,7 +548,7 @@ def load_findings_dataframe(
                 "Classical Risk": _normalise(getattr(component, "classical_risk", None)).capitalize(),
                 "Recommendation": _normalise(getattr(component, "recommendation", None)),
                 "Observation": _normalise(getattr(component, "observation", None)),
-                "Risk Rating": (
+                "Quantum Risk": (
                     q_risk.value if q_risk is not None and hasattr(q_risk, "value") else str(q_risk or "unknown")
                 ).capitalize(),
                 "Scanner source": "unknown",
@@ -574,7 +574,7 @@ def load_findings_dataframe(
         "Classical Risk",
         "Recommendation",
         "Observation",
-        "Risk Rating",
+        "Quantum Risk",
         "Scanner source",
         "Source Type",
         "Source Path",
@@ -618,7 +618,7 @@ def _style_dataframe(dataframe):
     if style_function is None:
         return dataframe
 
-    return style_function(_risk_css, subset=["Risk Rating"])
+    return style_function(_risk_css, subset=["Quantum Risk"])
 
 
 def _safe_text_columns(dataframe):
@@ -652,7 +652,7 @@ def _report_findings_from_dataframe(dataframe) -> list[dict[str, Any]]:
     """Adapt displayed CBOM fields for reporting, preserving unknown assessments."""
     return [{
         "algorithm_name": row["Algorithm"],
-        "quantum_risk": row["Risk Rating"].lower(),
+        "quantum_risk": row["Quantum Risk"].lower(),
         "classical_risk": row["Classical Risk"].lower(),
         "source_type": row["Source Type"], "source_path": row["Source Path"],
         "quantum_vulnerable": row["Quantum Vulnerable"].lower() == "true",
@@ -674,7 +674,7 @@ def _render_metrics(full_dataframe, summary=None) -> None:
         return
 
     counts = (
-        full_dataframe["Risk Rating"]
+        full_dataframe["Quantum Risk"]
         .value_counts()
         .reindex(RISK_ORDER, fill_value=0)
         .to_dict()
@@ -691,7 +691,7 @@ def _render_metrics(full_dataframe, summary=None) -> None:
         hygiene_score = summary["hygiene_score"]
     elif calculate_hygiene_score is not None:
         hygiene_score = calculate_hygiene_score(
-            [{"classical_risk": row.get("Classical Risk", row["Risk Rating"])} for _, row in full_dataframe.iterrows()]
+            [{"classical_risk": row.get("Classical Risk", row["Quantum Risk"])} for _, row in full_dataframe.iterrows()]
         )
     else:
         hygiene_score = max(
@@ -703,8 +703,8 @@ def _render_metrics(full_dataframe, summary=None) -> None:
         raw_status = summary["posture_status"] if summary is not None else calculate_posture_status(
             [
                 {
-                    "quantum_risk": row["Risk Rating"],
-                    "classical_risk": row.get("Classical Risk", row["Risk Rating"]),
+                    "quantum_risk": row["Quantum Risk"],
+                    "classical_risk": row.get("Classical Risk", row["Quantum Risk"]),
                     "quantum_vulnerable": str(row["Quantum Vulnerable"]).lower() == "true",
                 }
                 for _, row in full_dataframe.iterrows()
@@ -729,16 +729,16 @@ def _render_metrics(full_dataframe, summary=None) -> None:
     columns = st.columns(5)
     columns[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
     columns[1].metric("Posture Status", posture_status)
-    columns[2].metric("Critical", crit_count)
-    columns[3].metric("Medium", med_count)
-    columns[4].metric("Safe", safe_count)
+    columns[2].metric("Quantum Critical", crit_count)
+    columns[3].metric("Quantum Medium", med_count)
+    columns[4].metric("Quantum Safe", safe_count)
 
     st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
-    st.caption("Hygiene reflects classical assessment and coverage; unknown assets are unverified. Risk Rating shows quantum risk. Posture considers both risks.")
+    st.caption("Hygiene reflects classical assessment and coverage; unknown assets are unverified. Quantum Risk and Classical Risk are separate assessments. Posture considers both risks.")
     classical_critical = int((full_dataframe["Classical Risk"].astype(str).str.lower() == "critical").sum())
     if classical_critical:
         st.error(f"CLASSICAL RISK: {classical_critical} findings require remediation of classical weaknesses.")
-    quantum_unknown = int((full_dataframe["Risk Rating"].astype(str).str.lower() == "unknown").sum())
+    quantum_unknown = int((full_dataframe["Quantum Risk"].astype(str).str.lower() == "unknown").sum())
     classical_unknown = int((full_dataframe["Classical Risk"].astype(str).str.lower() == "unknown").sum())
     if quantum_unknown or classical_unknown:
         st.info(f"Assessment incomplete: {quantum_unknown} quantum and {classical_unknown} classical findings remain unknown.")
@@ -765,10 +765,10 @@ def _render_risk_chart(dataframe) -> None:
         return
 
     chart_data = (
-        dataframe["Risk Rating"]
+        dataframe["Quantum Risk"]
         .value_counts()
         .reindex(RISK_ORDER, fill_value=0)
-        .rename_axis("Risk Rating")
+        .rename_axis("Quantum Risk")
         .reset_index(name="Findings")
     )
 
@@ -780,17 +780,17 @@ def _render_risk_chart(dataframe) -> None:
 
     figure = px.pie(
         chart_data,
-        names="Risk Rating",
+        names="Quantum Risk",
         values="Findings",
         hole=0.55,
-        color="Risk Rating",
+        color="Quantum Risk",
         color_discrete_map=RISK_COLORS,
-        category_orders={"Risk Rating": RISK_ORDER},
+        category_orders={"Quantum Risk": RISK_ORDER},
     )
 
     figure.update_layout(
         template="plotly_dark",
-        legend_title_text="Risk Rating",
+        legend_title_text="Quantum Risk",
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
     )
 
@@ -822,10 +822,14 @@ def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
             version="1.0.0",
         )
         for finding in findings:
-            # Real scanners and fallbacks share the contract and central engine.
+            # Scanners share the contract; protocol assessments retain context.
             if isinstance(finding, CryptoFinding):
                 scanner_src = _get_finding_scanner_source(finding)
-                finding = enrich_finding(finding)
+                if finding.source_type == "network-capture" and scanner_src == "real: scanner.pcap_scanner":
+                    # Retain protocol context: negotiation, plaintext and SSH.
+                    finding = finding.model_copy(deep=True)
+                else:
+                    finding = enrich_finding(finding)
                 _set_finding_scanner_source(finding, scanner_src)
             serializer.add_finding(finding)
             scanner_src = _get_finding_scanner_source(finding)
@@ -1120,7 +1124,7 @@ def render_dashboard(
         risk_options = [
             risk
             for risk in RISK_ORDER
-            if risk in set(dataframe["Risk Rating"])
+            if risk in set(dataframe["Quantum Risk"])
         ]
 
         selected_sources = st.multiselect(
@@ -1130,10 +1134,20 @@ def render_dashboard(
         )
 
         selected_risks = st.multiselect(
-            "Risk tier",
+            "Quantum risk",
             options=risk_options,
             default=risk_options,
         )
+
+        classical_options = [risk for risk in RISK_ORDER if risk in set(dataframe["Classical Risk"])]
+        selected_classical = st.multiselect(
+            "Classical risk", options=classical_options, default=classical_options,
+        )
+        observation_options = sorted(dataframe["Observation"].unique())
+        selected_observations = st.multiselect(
+            "Observation", options=observation_options, default=observation_options,
+        )
+        st.caption("All filters apply together. Advertised means offered capability; negotiated means selected or inferred selection, without proving session completion.")
 
         search_query = st.text_input(
             "Search algorithm or evidence",
@@ -1182,7 +1196,9 @@ def render_dashboard(
 
     filtered_dataframe = dataframe[
         dataframe["Source Type"].isin(selected_sources)
-        & dataframe["Risk Rating"].isin(selected_risks)
+        & dataframe["Quantum Risk"].isin(selected_risks)
+        & dataframe["Classical Risk"].isin(selected_classical)
+        & dataframe["Observation"].isin(selected_observations)
     ].copy()
 
     if search_query:
@@ -1221,7 +1237,7 @@ def render_dashboard(
     chart_column, summary_column = st.columns([1, 1])
 
     with chart_column:
-        st.subheader("Risk distribution")
+        st.subheader("Quantum risk distribution")
         _render_risk_chart(filtered_dataframe)
 
     with summary_column:
@@ -1244,7 +1260,7 @@ def render_dashboard(
 
     display_columns = [
         "Algorithm",
-        "Risk Rating",
+        "Quantum Risk",
         "Classical Risk",
         "Recommendation",
         "Observation",

@@ -80,11 +80,11 @@ def test_dashboard_enriches_real_cloud_and_exports_valid_cbom():
     schema = json.loads((root / "tests/fixtures/bom-1.6.schema.json").read_text(encoding="utf-8"))
     jsonschema.validate(cbom, schema)
     dataframe = load_findings_dataframe(cbom)
-    assert (dataframe["Risk Rating"] == "Unknown").sum() == 19
-    risk_options = [risk for risk in RISK_ORDER if risk in set(dataframe["Risk Rating"])]
+    assert (dataframe["Quantum Risk"] == "Unknown").sum() == 19
+    risk_options = [risk for risk in RISK_ORDER if risk in set(dataframe["Quantum Risk"])]
     assert "Unknown" in risk_options
-    assert len(dataframe[dataframe["Risk Rating"].isin(risk_options)]) == 99
-    assert (dataframe["Risk Rating"] == "Critical").any()
+    assert len(dataframe[dataframe["Quantum Risk"].isin(risk_options)]) == 99
+    assert (dataframe["Quantum Risk"] == "Critical").any()
     assert (dataframe["Classical Risk"] == "Critical").any()
     assert (dataframe["Recommendation"] != "unknown").all()
     assert dataframe["Description"].str.contains("Risco quântico").all()
@@ -103,6 +103,6 @@ def test_uploaded_cloud_uses_same_enrichment_pipeline():
     cbom, warnings = scan_uploaded_files([Upload()])
     assert not warnings
     row = load_findings_dataframe(cbom).iloc[0]
-    assert row["Risk Rating"] == "Critical"
+    assert row["Quantum Risk"] == "Critical"
     assert row["Classical Risk"] == "Safe"
     assert "ML-DSA" in row["Recommendation"]
