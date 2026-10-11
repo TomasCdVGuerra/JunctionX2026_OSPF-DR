@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import re
@@ -83,6 +84,30 @@ except ImportError:  # pragma: no cover
     evaluate_risk = None  # type: ignore[assignment]
     is_classically_broken = None  # type: ignore[assignment]
     map_nist_standard = None  # type: ignore[assignment]
+
+
+def _is_java_scanner_available() -> bool:
+    """Check if scanner.java_scanner is importable and has scanner functionality."""
+    try:
+        spec = importlib.util.find_spec("scanner.java_scanner")
+        if spec is None:
+            return False
+        import scanner.java_scanner as java_mod
+        return hasattr(java_mod, "scan_java_file") or hasattr(java_mod, "scan") or hasattr(java_mod, "scan_file")
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+def _is_python_scanner_available() -> bool:
+    """Check if scanner.python_scanner is importable and has scanner functionality."""
+    try:
+        spec = importlib.util.find_spec("scanner.python_scanner")
+        if spec is None:
+            return False
+        import scanner.python_scanner as py_mod
+        return hasattr(py_mod, "scan_python_file") or hasattr(py_mod, "scan") or hasattr(py_mod, "scan_file")
+    except (ImportError, AttributeError, ValueError):
+        return False
 
 
 def _set_finding_scanner_source(finding: Any, source_label: str) -> None:
@@ -175,6 +200,50 @@ RISK_COLORS = {
     "Safe": "#16a34a",
     "Unknown": "#6b7280",
 }
+RISK_TEXT_COLORS = {
+    "Critical": "#ffffff",
+    "Medium": "#1e1e1e",
+    "Safe": "#ffffff",
+    "Unknown": "#ffffff",
+}
+
+CUSTOM_CSS = """
+<style>
+/* Enterprise card styling for stMetric (native light and dark adaptive) */
+[data-testid="stMetric"] {
+    background-color: rgba(128, 128, 128, 0.10);
+    border: 1px solid rgba(128, 128, 128, 0.25);
+    border-radius: 8px;
+    padding: 14px 18px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(128, 128, 128, 0.18);
+}
+
+/* Hide ONLY footer and deploy button; preserve header, main menu, and sidebar toggle */
+footer, [data-testid="stFooter"] {
+    display: none;
+}
+
+.stAppDeployButton, [data-testid="stAppDeployButton"] {
+    display: none;
+}
+</style>
+"""
+
+
+def _render_columns(spec: Any, gap: Any = "large") -> list[Any]:
+    """Render columns with gap spacing while supporting restricted mocks."""
+    if st is None:
+        return []
+    try:
+        return st.columns(spec, gap=gap)
+    except TypeError:
+        return st.columns(spec)
+
 
 CRIT_WEIGHT = 100
 MED_WEIGHT = 30
@@ -640,8 +709,11 @@ def load_findings_dataframe(
 
 def _risk_css(value: Any) -> str:
     """Return CSS for a risk-rating cell."""
-    color = RISK_COLORS.get(str(value), RISK_COLORS["Unknown"])
-    return f"background-color: {color}; color: white; font-weight: bold"
+    val_str = str(value)
+    color = RISK_COLORS.get(val_str, RISK_COLORS["Unknown"])
+    text_color = RISK_TEXT_COLORS.get(val_str, RISK_TEXT_COLORS["Unknown"])
+    return f"background-color: {color}; color: {text_color}; font-weight: bold"
+
 
 
 def _style_dataframe(dataframe):
@@ -908,7 +980,7 @@ def _render_metrics(full_dataframe, summary: dict[str, Any] | None = None) -> No
     posture_status = posture_map.get(raw_status, f"• {raw_status}")
 
     # Row 1: 3 primary executive indicators
-    row1_cols = st.columns(3)
+    row1_cols = _render_columns(3, gap="large")
     row1_cols[0].metric("Crypto Hygiene", f"{hygiene_score}/100")
     row1_cols[1].metric(
         "Quantum Risk Score",
@@ -917,12 +989,13 @@ def _render_metrics(full_dataframe, summary: dict[str, Any] | None = None) -> No
     row1_cols[2].metric("Posture Status", posture_status)
 
     # Row 2: 5 granular counts
-    row2_cols = st.columns(5)
+    row2_cols = _render_columns(5, gap="large")
     row2_cols[0].metric("Critical", crit_count)
     row2_cols[1].metric("Medium", med_count)
     row2_cols[2].metric("Safe", safe_count)
     row2_cols[3].metric("Unknown", unk_count)
     row2_cols[4].metric("Total Findings", total_count)
+
 
     st.progress(hygiene_score / 100.0, text="Overall Crypto Hygiene")
     st.info("Executive metrics use the full active scan; filters affect only the detailed view.")
@@ -973,12 +1046,13 @@ def _render_risk_chart(dataframe) -> None:
     )
 
     figure.update_layout(
-        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         legend_title_text="Risk Rating",
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
     )
 
-    st.plotly_chart(figure, use_container_width=True)
+    st.plotly_chart(figure, width="stretch")
 
 
 def _render_download_button(cbom: dict[str, Any]) -> None:
@@ -994,8 +1068,9 @@ def _render_download_button(cbom: dict[str, Any]) -> None:
         data=serialized_cbom.encode("utf-8"),
         file_name="cbom.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
     )
+
 
 
 def _build_cbom_from_findings(findings: list[Any]) -> dict[str, Any]:
@@ -1388,6 +1463,12 @@ def scan_uploaded_files(
             else:
                 warnings.append(f"Skipped unsupported file: {orig_name}")
 
+        upload_exts = {Path(getattr(u, "name", "")).suffix.lower() for u in uploaded_files}
+        if ".java" in upload_exts and not _is_java_scanner_available():
+            warnings.append("source-code (Java scanner missing)")
+        if ".py" in upload_exts and not _is_python_scanner_available():
+            warnings.append("source-code (Python scanner missing)")
+
         # 1. Scan cloud posture JSONs together
         if cloud_uploads:
             try:
@@ -1396,9 +1477,20 @@ def scan_uploaded_files(
                     scanner_mod, method_name = real_scanner
                     logger.info("Using real scanner: %s (via %s) for cloud-posture", scanner_mod.__name__, method_name)
                     method = getattr(scanner_mod, method_name)
-                    cloud_findings = method(cloud_dir)
-                    if not isinstance(cloud_findings, list):
-                        cloud_findings = [cloud_findings] if cloud_findings else []
+                    cloud_findings = []
+                    if method_name in ("scan_cloud_directory", "scan_directory"):
+                        res = method(cloud_dir)
+                        if isinstance(res, list):
+                            cloud_findings.extend(res)
+                        elif res:
+                            cloud_findings.append(res)
+                    else:
+                        for c_path, _ in cloud_uploads:
+                            res = method(c_path)
+                            if isinstance(res, list):
+                                cloud_findings.extend(res)
+                            elif res:
+                                cloud_findings.append(res)
                     _tag_findings_scanner_source(cloud_findings, f"real: {scanner_mod.__name__}")
                 else:
                     logger.info("Using FALLBACK heuristic for cloud-posture")
@@ -1505,6 +1597,25 @@ def scan_bundled_data(
     cloud_dir = sample_dir / "cloud-posture"
     pcap_dir = sample_dir / "network-capture"
 
+    target_source_dir = sample_repos if sample_repos.exists() else sample_dir
+    has_java = False
+    has_python = False
+    if target_source_dir.exists():
+        for file_p in target_source_dir.rglob("*"):
+            if file_p.is_file():
+                suffix = file_p.suffix.lower()
+                if suffix == ".java":
+                    has_java = True
+                elif suffix == ".py":
+                    has_python = True
+                if has_java and has_python:
+                    break
+
+    if has_java and not _is_java_scanner_available():
+        warnings.append("source-code (Java scanner missing)")
+    if has_python and not _is_python_scanner_available():
+        warnings.append("source-code (Python scanner missing)")
+
     if sample_repos.exists():
         try:
             real_scanner = _get_source_scanner_dir()
@@ -1532,9 +1643,20 @@ def scan_bundled_data(
                 scanner_mod, method_name = real_scanner
                 logger.info("Using real scanner: %s (via %s) for cloud-posture", scanner_mod.__name__, method_name)
                 method = getattr(scanner_mod, method_name)
-                cloud_res = method(cloud_dir)
-                if not isinstance(cloud_res, list):
-                    cloud_res = [cloud_res] if cloud_res else []
+                cloud_res = []
+                if method_name in ("scan_cloud_directory", "scan_directory"):
+                    res = method(cloud_dir)
+                    if isinstance(res, list):
+                        cloud_res.extend(res)
+                    elif res:
+                        cloud_res.append(res)
+                else:
+                    for json_p in sorted(cloud_dir.glob("*.json")):
+                        res = method(json_p)
+                        if isinstance(res, list):
+                            cloud_res.extend(res)
+                        elif res:
+                            cloud_res.append(res)
                 _tag_findings_scanner_source(cloud_res, f"real: {scanner_mod.__name__}")
                 findings.extend(cloud_res)
             else:
@@ -1579,6 +1701,8 @@ def render_dashboard(
         render_cli_fallback_notice()
         return
 
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
     dataframe = _safe_text_columns(
         load_findings_dataframe(cbom)
     )
@@ -1617,7 +1741,7 @@ def render_dashboard(
             placeholder="RSA, SHA-1, source path, rule ID...",
         )
 
-        if st.button("Clear active scan", use_container_width=True):
+        if st.button("Clear active scan", width="stretch"):
             st.session_state["cbom"] = None
             st.session_state["cbom_source"] = None
             st.session_state["scan_warnings"] = []
@@ -1641,12 +1765,26 @@ def render_dashboard(
 
     if "Scanner source" in dataframe.columns:
         fallback_mask = dataframe["Scanner source"] == "FALLBACK heuristic"
+        used_types: list[str] = []
         if fallback_mask.any():
-            used_types = sorted(
+            used_types.extend(
                 str(t)
                 for t in dataframe.loc[fallback_mask, "Source Type"].dropna().unique()
             )
-            types_str = ", ".join(used_types) if used_types else "unknown inputs"
+
+        if st is not None and hasattr(st, "session_state"):
+            try:
+                raw_warnings = st.session_state.get("scan_warnings", [])
+                if isinstance(raw_warnings, list):
+                    for w in raw_warnings:
+                        if isinstance(w, str) and "scanner missing" in w.lower() and w not in used_types:
+                            used_types.append(w)
+            except (AttributeError, TypeError):
+                pass
+
+        if used_types:
+            used_types = sorted(set(used_types))
+            types_str = ", ".join(used_types)
             st.warning(f"⚠️ Fallback heuristic scanner used for: {types_str}")
 
     filtered_dataframe = dataframe[
@@ -1689,6 +1827,7 @@ def render_dashboard(
     summary = build_report_summary(report_findings) if build_report_summary is not None else None
 
     _render_metrics(dataframe, summary=summary)
+    st.divider()
 
     st.subheader("Executive Risk Report")
 
@@ -1709,7 +1848,7 @@ def render_dashboard(
         )
 
     if summary:
-        col_src, col_algo = st.columns(2)
+        col_src, col_algo = _render_columns(2, gap="large")
         with col_src:
             st.markdown("#### Findings by Source")
             by_src = summary.get("by_source_type", {})
@@ -1717,7 +1856,7 @@ def render_dashboard(
                 src_df = pd.DataFrame(
                     [{"Source Type": k, "Count": v} for k, v in by_src.items()]
                 )
-                st.dataframe(src_df, hide_index=True, use_container_width=True)
+                st.dataframe(src_df, hide_index=True, width="stretch")
             else:
                 st.write("No source data available.")
 
@@ -1728,14 +1867,16 @@ def render_dashboard(
                 algo_df = pd.DataFrame(
                     [{"Algorithm": k, "Count": v} for k, v in by_algo.items()]
                 )
-                st.dataframe(algo_df, hide_index=True, use_container_width=True)
+                st.dataframe(algo_df, hide_index=True, width="stretch")
             else:
                 st.write("No algorithm data available.")
 
         with st.expander("View Full Executive Risk Report (JSON)", expanded=False):
             st.json(summary)
 
-    chart_column, summary_column = st.columns([1, 1])
+    st.divider()
+
+    chart_column, summary_column = _render_columns([1, 1], gap="large")
 
     with chart_column:
         st.subheader("Risk distribution")
@@ -1751,6 +1892,8 @@ def render_dashboard(
             st.write(f"**CBOM source:** `{cbom_path}`")
 
         _render_download_button(cbom)
+
+    st.divider()
 
     st.subheader("Cryptographic findings")
 
@@ -1784,10 +1927,27 @@ def render_dashboard(
         ]
     ]
 
+    findings_column_config: dict[str, Any] = {}
+    if hasattr(st, "column_config"):
+        findings_column_config = {
+            "Algorithm": st.column_config.TextColumn("Algorithm", width="medium"),
+            "Quantum Risk": st.column_config.TextColumn("Quantum Risk", width="small"),
+            "Classical Risk": st.column_config.TextColumn("Classical Risk", width="small"),
+            "Risk Rating": st.column_config.TextColumn("Risk Rating", width="small"),
+            "Source Type": st.column_config.TextColumn("Source Type", width="small"),
+            "Source Path": st.column_config.TextColumn("Source Path", width="medium"),
+            "Operation": st.column_config.TextColumn("Operation", width="small"),
+            "Line Number": st.column_config.NumberColumn("Line Number", width="small"),
+            "Matched Snippet": st.column_config.TextColumn("Matched Snippet", width="medium"),
+            "Rule ID": st.column_config.TextColumn("Rule ID", width="small"),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+        }
+
     st.dataframe(
         _style_dataframe(display_dataframe),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
+        column_config=findings_column_config,
     )
 
     with st.expander("🔍 Inspect Finding Evidence & NIST Guidance", expanded=False):
@@ -1802,7 +1962,7 @@ def render_dashboard(
             )
             if selected_idx is not None:
                 f_row = filtered_dataframe.iloc[selected_idx]
-                col_a, col_b = st.columns(2)
+                col_a, col_b = _render_columns(2, gap="large")
                 with col_a:
                     st.write(f"**Algorithm:** {f_row.get('Algorithm')}")
                     st.write(f"**Quantum Risk:** {f_row.get('Quantum Risk', f_row.get('Risk Rating'))}")
@@ -1816,13 +1976,15 @@ def render_dashboard(
                     st.write(f"**Matched Snippet:** `{f_row.get('Matched Snippet', 'unknown')}`")
                 st.info(f"**Risk Reasoning:** {f_row.get('Description', 'No description available.')}")
 
+    st.divider()
+
     # Findings CSV download button
     st.download_button(
         label="Download Findings as CSV",
         data=display_dataframe.to_csv(index=False).encode("utf-8"),
         file_name="quantumtrace_findings.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -1858,6 +2020,7 @@ def main() -> None:
         page_icon="🔐",
         layout="wide",
     )
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     if "cbom" not in st.session_state:
         st.session_state["cbom"] = None
@@ -1876,8 +2039,8 @@ def main() -> None:
             accept_multiple_files=True,
         )
 
-        scan_uploaded_button = st.button("Scan uploaded files", use_container_width=True)
-        scan_bundled_button = st.button("Scan bundled sample data", use_container_width=True)
+        scan_uploaded_button = st.button("Scan uploaded files", width="stretch")
+        scan_bundled_button = st.button("Scan bundled sample data", width="stretch")
 
         st.divider()
         uploaded_cbom = st.file_uploader(
@@ -1888,7 +2051,7 @@ def main() -> None:
 
         load_local_button = False
         if DEFAULT_CBOM_PATH.exists():
-            load_local_button = st.button("Load local cbom.json", use_container_width=True)
+            load_local_button = st.button("Load local cbom.json", width="stretch")
 
     # Handle scan actions
     if scan_uploaded_button:
@@ -1949,7 +2112,8 @@ def main() -> None:
 
     # Render dashboard from session state
     for warn in st.session_state.get("scan_warnings", []):
-        st.warning(warn)
+        if "scanner missing" not in warn.lower():
+            st.warning(warn)
 
     render_dashboard(active_cbom, st.session_state.get("cbom_source"))
 

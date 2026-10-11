@@ -1072,3 +1072,56 @@ def test_grouping_matches_scanner_report_helpers():
     assert summary["by_algorithm"]["RSA-2048"] == 2
     assert summary["by_algorithm"]["AES-256-GCM"] == 1
 
+
+def test_missing_java_scanner_warning_in_uploaded_files():
+    """Verify uploading .java files without a functional java scanner appends a warning."""
+    files = [MockUploadedFile("Service.java", "KeyPairGenerator.getInstance(\"RSA\");")]
+    _cbom, warnings = scan_uploaded_files(files)
+    assert "source-code (Java scanner missing)" in warnings
+
+
+def test_missing_python_scanner_warning_in_uploaded_files():
+    """Verify uploading .py files without a functional python scanner appends a warning."""
+    files = [MockUploadedFile("app.py", "import hashlib\nhashlib.sha1(b'x')")]
+    _cbom, warnings = scan_uploaded_files(files)
+    assert "source-code (Python scanner missing)" in warnings
+
+
+def test_missing_scanner_warnings_in_bundled_data():
+    """Verify scanning bundled data appends warnings when Java/Python scanners are unavailable."""
+    _cbom, warnings = dashboard.scan_bundled_data()
+    assert "source-code (Java scanner missing)" in warnings
+    assert "source-code (Python scanner missing)" in warnings
+
+
+def test_fallback_banner_renders_missing_scanner_warnings():
+    """Verify render_dashboard includes missing scanner warnings in the fallback banner."""
+    cbom = {
+        "components": [
+            {
+                "name": "RSA-2048",
+                "properties": [
+                    {"name": "cryptotrace:riskRating", "value": "Critical"},
+                    {"name": "cryptotrace:sourceType", "value": "source-code"},
+                    {"name": "cryptotrace:scannerSource", "value": "real: scanner.source_scanner"},
+                ],
+            }
+        ]
+    }
+    with patch("dashboard.st") as mock_st:
+        mock_st.session_state = {
+            "scan_warnings": ["source-code (Java scanner missing)"]
+        }
+        mock_st.file_uploader.return_value = None
+        mock_st.multiselect.side_effect = lambda label, options, default: default
+        mock_st.text_input.return_value = ""
+        mock_st.button.return_value = False
+        mock_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
+
+        render_dashboard(cbom)
+
+        warning_calls = [str(call.args[0]) for call in mock_st.warning.call_args_list if call.args]
+        fallback_warnings = [msg for msg in warning_calls if "Fallback heuristic" in msg]
+        assert len(fallback_warnings) == 1
+        assert "source-code (Java scanner missing)" in fallback_warnings[0]
+
